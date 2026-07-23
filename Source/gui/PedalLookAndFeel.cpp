@@ -189,7 +189,43 @@ void PedalLookAndFeel::drawToggleButton (juce::Graphics& g,
         return;
     }
 
-    // Fallback — should not be reached in normal use
+    if (id == "gate")
+    {
+        const float w   = (float) button.getWidth();
+        const float h   = (float) button.getHeight();
+        const float pad = 2.0f;
+        const float bx  = pad;
+        const float by  = pad;
+        const float bw  = w - 2.0f * pad;
+        const float bh  = h - 2.0f * pad;
+        const bool  on  = button.getToggleState();
+
+        g.setColour (juce::Colour (0xff0e0c18));
+        g.fillRoundedRectangle (bx, by, bw, bh, 3.0f);
+
+        g.setColour (on ? juce::Colour (0xff7733bb) : juce::Colour (0xff2a1a44));
+        g.drawRoundedRectangle (bx, by, bw, bh, 3.0f, 1.2f);
+
+        if (on)
+        {
+            g.setColour (juce::Colour (0x186633aa));
+            g.fillRoundedRectangle (bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 2.5f);
+        }
+
+        if (highlighted)
+        {
+            g.setColour (juce::Colour (0x18ffffff));
+            g.fillRoundedRectangle (bx, by, bw, bh, 3.0f);
+        }
+
+        g.setFont (juce::Font (juce::FontOptions().withTypeface (interSemiBold).withHeight (9.0f)));
+        g.setColour (on ? juce::Colour (0xffccaaff) : juce::Colour (0xff443355));
+        g.drawText (on ? "ON" : "OFF", 0, (int) by, (int) w, (int) bh,
+                    juce::Justification::centred, false);
+        return;
+    }
+
+    // Fallback
     g.setColour (juce::Colour (0xff333333));
     g.fillRoundedRectangle (button.getLocalBounds().toFloat(), 4.0f);
 }

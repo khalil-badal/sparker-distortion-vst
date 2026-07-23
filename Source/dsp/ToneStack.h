@@ -2,47 +2,24 @@
 #include <JuceHeader.h>
 
 // ---------------------------------------------------------------------------
-// ToneStack — Big Muff π tone control (R10, R11, C8, C9, RV2).
+// ToneStack — the Riot's tone control: a simple variable treble cut.
 //
-// CIRCUIT VALUES:
-//   R10 = 12 kΩ,  R11 = 8.2 kΩ,  C8 = C9 = 22 nF,  RV2 = 10 kΩ
+// From the Aion Fusion (traced Suhr Riot) schematic:
+//   TONE is a 10kC (reverse-log) pot with C8 (22 nF) to ground — a classic
+//   variable first-order low-pass. NOT a Big Muff LP/HP blend; the Riot
+//   never scoops mids.
 //
-// HOW THE BIG MUFF TONE CONTROL WORKS:
-//   The pot (RV2) has its two ends connected to two separate RC networks.
-//   The wiper position blends continuously between:
+//   Pot fully counter-clockwise (t=0): full 10 kΩ in circuit,
+//     fc = 1/(2π·10k·22n) ≈ 723 Hz  (dark)
+//   Pot fully clockwise (t=1): pot resistance ≈ 0, the cap has nothing to
+//     roll off against → effectively no treble cut (bright).
 //
-//     t = 0 → bass-heavy: a low-pass RC path dominates
-//     t = 1 → treble-heavy: a high-pass RC path dominates
+// DSP: one first-order LPF whose cutoff sweeps exponentially from 723 Hz
+// to ~12 kHz. The exponential sweep stands in for the C-taper pot, which
+// concentrates most of the audible change in the lower half of rotation.
 //
-//   At t = 0.5 (noon), both paths are equally active. Because the LP and HP
-//   outputs are partially out of phase at mid-frequencies, they partially cancel,
-//   creating the characteristic mid-scoop.
-//
-// DSP MODEL — two parallel first-order filters, blended:
-//
-//   H(s, t) = (1−t)·H_LP(s) + t·H_HP(s)
-//
-//   Low-pass branch:
-//     fc_LP = 1 / (2π · (R10 + (1−t)·RV2) · C8)
-//     At t=0: fc_LP = 1/(2π·22k·22n) ≈ 330 Hz   (gentle cut above 330 Hz)
-//     At t=1: fc_LP = 1/(2π·12k·22n) ≈ 603 Hz   (steeper cut, more treble removed)
-//
-//   High-pass branch:
-//     fc_HP = 1 / (2π · (R11 + t·RV2) · C9)
-//     At t=0: fc_HP = 1/(2π·8.2k·22n) ≈ 882 Hz  (gentle cut below 882 Hz)
-//     At t=1: fc_HP = 1/(2π·18.2k·22n) ≈ 397 Hz (steeper cut, more bass removed)
-//
-//   Mid-scoop at t=0.5:
-//     fc_LP ≈ 425 Hz, fc_HP ≈ 547 Hz — both poles converge near 500 Hz,
-//     causing a ~6–10 dB notch at that frequency from the partial cancellation.
-//
-// IMPLEMENTATION:
-//   1. Run the input through lpFilter → LP output
-//   2. Run the same input through hpFilter → HP output (uses a pre-allocated copy)
-//   3. output = (1−t)·LP + t·HP  (sample-by-sample blend)
-//
-// The bilinear transform converts the continuous-time H(s) to discrete-time
-// coefficients at the current sample rate. Coefficients update whenever TONE moves.
+// (The internal 20k PRESENCE trimmer that the Aion build adds is not part
+// of the original pedal and is not modelled.)
 // ---------------------------------------------------------------------------
 class ToneStack
 {
@@ -51,7 +28,7 @@ public:
     void process (juce::AudioBuffer<float>& buffer);
     void reset();
 
-    // tone: 0.0 = bass-heavy, 0.5 = mid-scooped, 1.0 = treble-heavy
+    // tone: 0.0 = dark (fc ≈ 723 Hz), 1.0 = bright (fc ≈ 12 kHz)
     void setTone (float tone);
 
 private:
@@ -60,17 +37,10 @@ private:
     double sampleRate  = 44100.0;
     float  currentTone = 0.5f;
 
-    // LP branch filter (cutoff sweeps with tone)
+    static constexpr float kFcMin = 723.0f;    // pot fully in circuit
+    static constexpr float kFcMax = 16000.0f;  // pot dialed out (bright, open)
+
     juce::dsp::ProcessorDuplicator<
         juce::dsp::IIR::Filter<float>,
         juce::dsp::IIR::Coefficients<float>> lpFilter;
-
-    // HP branch filter (cutoff sweeps with tone, opposite direction)
-    juce::dsp::ProcessorDuplicator<
-        juce::dsp::IIR::Filter<float>,
-        juce::dsp::IIR::Coefficients<float>> hpFilter;
-
-    // Pre-allocated buffer for the HP path (avoids allocation in processBlock).
-    // The LP path runs in-place on the main buffer; this holds the HP copy.
-    juce::AudioBuffer<float> hpBuffer;
 };

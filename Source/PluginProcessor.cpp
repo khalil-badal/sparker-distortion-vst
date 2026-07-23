@@ -20,10 +20,9 @@ SuhrRiotProcessor::createParameterLayout()
         juce::ParameterID { "drive", 1 }, "Drive",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
 
-    // Tone (RV2, C10k reverse-log taper on the real pedal).
-    // 0.0 = bass-heavy / low-pass dominant
-    // 0.5 = mid-scooped (both poles converge, classic Big Muff tone)
-    // 1.0 = treble-heavy / high-pass dominant
+    // Tone (10kC reverse-log pot + 22n cap on the real pedal).
+    // A simple variable treble cut: 0.0 = dark (LPF at ~723 Hz),
+    // 1.0 = bright (LPF at ~12 kHz, effectively open).
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "tone", 1 }, "Tone",
         juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f));
@@ -44,6 +43,18 @@ SuhrRiotProcessor::createParameterLayout()
     // Active (bypass) — true = effect engaged, false = hard bypass (dry pass-through).
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "active", 1 }, "Active", true));
+
+    // Oversampling order — 0=2x, 1=4x, 2=8x (default).
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "osOrder", 1 }, "Oversampling",
+        juce::StringArray { "2x", "4x", "8x" }, 2));
+
+    // Input noise gate threshold.
+    // -70 dBFS = essentially off;  -20 dBFS = very aggressive.
+    // Default -50 dBFS sits above typical pickup/cable noise but below soft picks.
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "gateThresh", 1 }, "Gate",
+        juce::NormalisableRange<float> (-70.0f, -20.0f), -50.0f));
 
     // Input Trim — pickup-level matching before the drive chain.
     // 0 dB = unity, negative values attenuate (reduce saturation),
@@ -96,6 +107,7 @@ void SuhrRiotProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     // Give each DSP stage a chance to allocate its internal buffers and
     // compute sample-rate-dependent values (filter coefficients, etc.).
     inputTrim    .prepare (sampleRate, samplesPerBlock);
+    noiseGate    .prepare (sampleRate, samplesPerBlock);
     inputStage   .prepare (sampleRate, samplesPerBlock);
     tightFilter  .prepare (sampleRate, samplesPerBlock);
     driveStage   .prepare (sampleRate, samplesPerBlock);
@@ -110,6 +122,7 @@ void SuhrRiotProcessor::releaseResources()
     // Flush all internal filter states and delay lines.
     // Called when playback stops or the plugin is unloaded.
     inputTrim    .reset();
+    noiseGate    .reset();
     inputStage   .reset();
     tightFilter  .reset();
     driveStage   .reset();
@@ -138,25 +151,30 @@ void SuhrRiotProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // Read current parameter values from the APVTS.
     // getRawParameterValue returns a pointer to an atomic<float>, which is
     // safe to read on the audio thread without locking.
-    const float drive       = apvts.getRawParameterValue ("drive")     ->load();
-    const float tone        = apvts.getRawParameterValue ("tone")      ->load();
-    const float level       = apvts.getRawParameterValue ("level")     ->load();
+    const float drive       = apvts.getRawParameterValue ("drive")      ->load();
+    const float tone        = apvts.getRawParameterValue ("tone")       ->load();
+    const float level       = apvts.getRawParameterValue ("level")      ->load();
     const int   mode        = static_cast<int> (apvts.getRawParameterValue ("mode")->load());
-    const float inputTrimDb = apvts.getRawParameterValue ("inputTrim") ->load();
-    const float tightFreq   = apvts.getRawParameterValue ("tightFreq") ->load();
-    const float outTrimDb   = apvts.getRawParameterValue ("outputTrim")->load();
+    const float inputTrimDb = apvts.getRawParameterValue ("inputTrim")  ->load();
+    const float tightFreq   = apvts.getRawParameterValue ("tightFreq")  ->load();
+    const float outTrimDb   = apvts.getRawParameterValue ("outputTrim") ->load();
+    const int   osOrder     = static_cast<int> (apvts.getRawParameterValue ("osOrder")->load());
+    const float gateThresh  = apvts.getRawParameterValue ("gateThresh")->load();
 
-    inputTrim    .setTrimDb    (inputTrimDb);
-    tightFilter  .setFrequency (tightFreq);
-    driveStage   .setDrive     (drive);
-    clippingStage.setMode      (mode);
+    inputTrim    .setTrimDb     (inputTrimDb);
+    noiseGate    .setThreshold  (gateThresh);
+    tightFilter  .setFrequency  (tightFreq);
+    driveStage   .setDrive      (drive);
+    clippingStage.setMode       (mode);
+    clippingStage.setOversamplingOrder (osOrder);
     toneStack    .setTone      (tone);
     outputStage  .setLevel     (level);
     outputTrim   .setTrimDb    (outTrimDb);
 
     // Signal chain:
-    //   Input Trim → AC buffer → Tight HPF → Drive amp → Clipper → Tone → Level → Output Trim
+    //   Input Trim → Gate → AC coupling → Tight HPF → Drive amp → Clipper → Tone → Level → Output Trim
     inputTrim    .process (buffer);
+    noiseGate    .process (buffer);
     inputStage   .process (buffer);
     tightFilter  .process (buffer);
     driveStage   .process (buffer);

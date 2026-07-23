@@ -9,73 +9,89 @@ void DriveStage::prepare (double sr, int samplesPerBlock)
     spec.maximumBlockSize = static_cast<juce::uint32> (samplesPerBlock);
     spec.numChannels      = 2;
 
-    // Bass-shaping HPF at 1592 Hz (models C5 100nF + R5 1kΩ in the gain-stage feedback).
-    // Matches the Suhr Riot Reloaded (V2) schematic — R5 ≈ 1 kΩ, C5 = 100 nF.
-    // Original code used R5 = 10 kΩ → 159 Hz (wrong by 10×), letting far too much
-    // low-end through the clipping stage and producing a thicker tone than the real pedal.
-    *bassFilter.state = *juce::dsp::IIR::Coefficients<float>::makeHighPass (sr, 1592.0f);
-    bassFilter.prepare (spec);
+    // Stage 1 shelf corner: R2 (1 kΩ) + C3 (220 nF) in the ground leg.
+    // fc = 1/(2π·1k·220n) ≈ 723 Hz. Frequencies above this receive the
+    // drive gain; below, the dry path keeps gain at unity.
+    *shelfHpf.state = *juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass (sr, 723.0f);
+    shelfHpf.prepare (spec);
 
-    // Ramp gain changes over 20 ms (= 0.02 s) to avoid zipper noise.
-    // The Multiplicative smoother interpolates geometrically, which sounds
-    // smooth across the large gain range (4.6× to 470×).
+    // Stage 2 band limits: C4/R3 → HPF 159 Hz;  C5/R4 → LPF 1.6 kHz.
+    *stage2Hpf.state = *juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass (sr, 159.0f);
+    stage2Hpf.prepare (spec);
+    *stage2Lpf.state = *juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowPass (sr, 1592.0f);
+    stage2Lpf.prepare (spec);
+
+    dryBuffer.setSize (2, samplesPerBlock);
+
+    // Ramp gain changes over 20 ms to avoid zipper noise.
     gainSmoothed.reset (sr, 0.02);
-    gainSmoothed.setCurrentAndTargetValue (4.6f); // default: drive=0 → gain≈4.6×
+    gainSmoothed.setCurrentAndTargetValue (50.0f); // drive=0.5 default
 }
 
 void DriveStage::setDrive (float drive)
 {
-    // Circuit-derived gain formula (see header for derivation):
-    //   gain = Rf / (Rin + (1 - drive) × RV1)
-    // Values from schematic: Rf = R3 = 470 kΩ, Rin = R2 = 1 kΩ, RV1 = 100 kΩ
-    //
-    // drive=0 → gain = 470k / (1k + 100k) = 470k / 101k ≈ 4.65×  (+13 dB)
-    // drive=1 → gain = 470k / (1k + 0)    = 470k / 1k   ≈ 470×   (+53 dB)
-    constexpr float Rf  = 470000.0f;
-    constexpr float Rin =   1000.0f;
-    constexpr float RV1 = 100000.0f;
-
-    const float gain = Rf / (Rin + (1.0f - drive) * RV1);
-    gainSmoothed.setTargetValue (gain);
+    // Stage 1: g1 = (drive · 100k) / R2 = drive · 100.
+    // Clamped away from zero because multiplicative smoothing cannot pass
+    // through 0 — at drive=0 the shelf contribution is inaudible anyway.
+    const float g1 = juce::jmax (0.01f, drive * 100.0f);
+    gainSmoothed.setTargetValue (g1);
 }
 
 void DriveStage::process (juce::AudioBuffer<float>& buffer)
 {
-    // Step 1: Bass-shaping filter (cuts low-end before amplification).
-    {
-        juce::dsp::AudioBlock<float>              block (buffer);
-        juce::dsp::ProcessContextReplacing<float> ctx (block);
-        bassFilter.process (ctx);
-    }
-
-    // Step 2: Variable gain, applied sample-by-sample when the knob is moving
-    // so the ramp is identical across all channels.
-    //
-    // The inner loop order (sample first, then channel) is intentional:
-    // getNextValue() must be called exactly once per sample to advance the
-    // ramp correctly. If we looped channels first, we'd advance the ramp
-    // N×channels times instead of N times.
     const int numSamples  = buffer.getNumSamples();
     const int numChannels = buffer.getNumChannels();
 
+    // ---- Stage 1: dry + g1 · HPF723(in) ------------------------------------
+    for (int ch = 0; ch < numChannels; ++ch)
+        dryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+
+    {
+        juce::dsp::AudioBlock<float>              block (buffer);
+        juce::dsp::ProcessContextReplacing<float> ctx (block);
+        shelfHpf.process (ctx);
+    }
+
+    // Sample-first loop so the smoother advances exactly once per sample.
     if (gainSmoothed.isSmoothing())
     {
         for (int i = 0; i < numSamples; ++i)
         {
             const float g = gainSmoothed.getNextValue();
             for (int ch = 0; ch < numChannels; ++ch)
-                buffer.getWritePointer (ch)[i] *= g;
+            {
+                float* out = buffer.getWritePointer (ch);
+                out[i] = dryBuffer.getReadPointer (ch)[i] + g * out[i];
+            }
         }
     }
     else
     {
-        // Knob not moving — JUCE's vectorised applyGain() is faster.
-        buffer.applyGain (gainSmoothed.getCurrentValue());
+        const float g = gainSmoothed.getCurrentValue();
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            float*       out = buffer.getWritePointer (ch);
+            const float* dry = dryBuffer.getReadPointer (ch);
+            for (int i = 0; i < numSamples; ++i)
+                out[i] = dry[i] + g * out[i];
+        }
     }
+
+    // ---- Stage 2: fixed 100× gain, band-limited 159 Hz – 1.6 kHz -----------
+    {
+        juce::dsp::AudioBlock<float>              block (buffer);
+        juce::dsp::ProcessContextReplacing<float> ctx (block);
+        stage2Hpf.process (ctx);
+        stage2Lpf.process (ctx);
+    }
+    buffer.applyGain (kStage2Gain);
 }
 
 void DriveStage::reset()
 {
-    bassFilter.reset();
-    gainSmoothed.setCurrentAndTargetValue (4.6f);
+    shelfHpf.reset();
+    stage2Hpf.reset();
+    stage2Lpf.reset();
+    dryBuffer.clear();
+    gainSmoothed.setCurrentAndTargetValue (50.0f);
 }

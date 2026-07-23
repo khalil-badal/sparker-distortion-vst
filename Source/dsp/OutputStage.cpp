@@ -8,8 +8,8 @@ void OutputStage::prepare (double sr, int samplesPerBlock)
     // that the knob still feels responsive.
     gainSmoothed.reset (sr, 0.02);
 
-    // Default: level=0.5 → gain = 0.5^2 = 0.25 (−12 dB)
-    gainSmoothed.setCurrentAndTargetValue (0.25f);
+    // Default: level=0.5 → gain = 0.5^2 * 0.5 = 0.125 (−18 dB)
+    gainSmoothed.setCurrentAndTargetValue (0.125f);
 
     (void) samplesPerBlock; // OutputStage doesn't need buffer-size info
 }
@@ -25,7 +25,10 @@ void OutputStage::setLevel (float level)
     //   level=0.0 → gain=0.00  (−∞ dB, silence)
     //   level=0.5 → gain=0.25  (−12 dB, feels like halfway)
     //   level=1.0 → gain=1.00  (  0 dB, full output)
-    const float gain = level * level;
+    // The clipper output is normalised to ≤ 1.0 (red-LED ceiling), so a
+    // 0.5 constant gives sensible pedal levels: level=0.5 → peaks ≈ −18 dBFS,
+    // level=1.0 → −6 dBFS. Comfortable headroom for amp-sim inputs.
+    const float gain = level * level * 0.5f;
     gainSmoothed.setTargetValue (gain);
 }
 
@@ -53,5 +56,5 @@ void OutputStage::process (juce::AudioBuffer<float>& buffer)
 
 void OutputStage::reset()
 {
-    gainSmoothed.setCurrentAndTargetValue (0.25f);
+    gainSmoothed.setCurrentAndTargetValue (0.125f);
 }

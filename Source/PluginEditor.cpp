@@ -44,11 +44,25 @@ static constexpr float kTightD   = 52.0f;
 static constexpr float kTightX   = 16.0f;
 static constexpr float kTightY   = 272.0f;
 
+// Oversampling selector — single cycling button below the Mode panel.
+// "OS:" label (24 px) + one button (30 px) aligned to the MODE panel left edge.
+static constexpr int   kOsLabelX = 462;   // flush with MODE panel left edge
+static constexpr int   kOsX      = 486;   // button starts after "OS:" label
+static constexpr int   kOsY      = 352;   // 24 px below MODE panel bottom
+static constexpr int   kOsW      = 30;    // single cycling button
+static constexpr int   kOsH      = 18;
+
+// Gate threshold knob — lower-left, below the TIGHT knob + its label.
+// Same size as the TIGHT knob so the two outer-left controls match visually.
+static constexpr float kGateKnobD = 40.0f;
+static constexpr float kGateKnobX = 16.0f;
+static constexpr float kGateKnobY = 346.0f;
+
 // Mode panel (lower-right, outside pedal) — component bounds
-static constexpr int   kModePX   = 482;
+static constexpr int   kModePX   = 462;
 static constexpr int   kModePY   = 256;
-static constexpr int   kModePW   = 104;
-static constexpr int   kModePH   = 110;
+static constexpr int   kModePW   = 114;
+static constexpr int   kModePH   = 72;
 
 // ============================================================================
 // Letter-spaced text helper
@@ -97,11 +111,13 @@ SuhrRiotEditor::SuhrRiotEditor (SuhrRiotProcessor& p)
       inputTrimAtt    (p.apvts, "inputTrim",   inputTrimKnob),
       outputTrimAtt   (p.apvts, "outputTrim",  outputTrimKnob),
       tightAtt        (p.apvts, "tightFreq",   tightKnob),
-      footswitchAtt   (p.apvts, "active",      footswitch)
+      footswitchAtt   (p.apvts, "active",      footswitch),
+      osSwitch        (p.apvts, laf),
+      gateAtt         (p.apvts, "gateThresh",  gateKnob)
 {
     // Rotary knobs
     for (auto* s : { &driveKnob, &toneKnob, &levelKnob,
-                     &inputTrimKnob, &outputTrimKnob, &tightKnob })
+                     &inputTrimKnob, &outputTrimKnob, &tightKnob, &gateKnob })
     {
         s->setLookAndFeel (&laf);
         s->setSliderStyle (juce::Slider::RotaryVerticalDrag);
@@ -129,6 +145,7 @@ SuhrRiotEditor::SuhrRiotEditor (SuhrRiotProcessor& p)
     outputTrimDbLabel.setText ("0.0 dB", juce::dontSendNotification);
 
     addAndMakeVisible (modeSwitch);
+    addAndMakeVisible (osSwitch);
 
     startTimerHz (15);
     setSize (kW, kH);
@@ -138,7 +155,7 @@ SuhrRiotEditor::~SuhrRiotEditor()
 {
     stopTimer();
     for (auto* s : { &driveKnob, &toneKnob, &levelKnob,
-                     &inputTrimKnob, &outputTrimKnob, &tightKnob })
+                     &inputTrimKnob, &outputTrimKnob, &tightKnob, &gateKnob })
         s->setLookAndFeel (nullptr);
     footswitch.setLookAndFeel (nullptr);
 }
@@ -268,6 +285,19 @@ void SuhrRiotEditor::paint (juce::Graphics& g)
                 (int) kTightX, (int) (kTightY + kTightD + 6.0f), (int) kTightD, 12,
                 juce::Justification::centred);
 
+    g.setFont (laf.semiBoldFont (9.0f));
+    g.setColour (juce::Colour (0xff7755aa));
+    g.drawText ("OS:",
+                kOsLabelX, kOsY, 24, kOsH,
+                juce::Justification::centredLeft);
+
+    g.setFont (lblFont);
+    g.setColour (lblCol);
+    g.drawText ("GATE",
+                (int) kGateKnobX, (int) (kGateKnobY + kGateKnobD + 6.0f),
+                (int) kGateKnobD, 12,
+                juce::Justification::centred);
+
     // -----------------------------------------------------------------------
     // 7. dB tick-mark scales beside the trim knobs (colors unchanged)
     // -----------------------------------------------------------------------
@@ -338,6 +368,13 @@ void SuhrRiotEditor::resized()
 
     // Tight knob
     tightKnob.setBounds ((int) kTightX, (int) kTightY, (int) kTightD, (int) kTightD);
+
+    // Oversampling selector
+    osSwitch.setBounds (kOsX, kOsY, kOsW, kOsH);
+
+    // Gate threshold knob
+    gateKnob.setBounds ((int) kGateKnobX, (int) kGateKnobY,
+                        (int) kGateKnobD, (int) kGateKnobD);
 
     // Mode panel
     modeSwitch.setBounds (kModePX, kModePY, kModePW, kModePH);

@@ -4,6 +4,7 @@
 #include "PluginProcessor.h"
 #include "gui/PedalLookAndFeel.h"
 #include "gui/ModeSwitch.h"
+#include "gui/OsSwitch.h"
 
 // ---------------------------------------------------------------------------
 // SuhrRiotEditor — "Khyle Audio Sparker" pedal GUI.
@@ -63,6 +64,12 @@ private:
     // 3-way mode selector (lower-right, outside pedal)
     ModeSwitch modeSwitch;
 
+    // Oversampling selector (lower-right, below MODE panel)
+    OsSwitch osSwitch;
+
+    // Gate threshold knob (lower-left, below TIGHT knob)
+    juce::Slider gateKnob;
+
     // Dynamic dB readout labels beneath the trim knobs
     juce::Label inputTrimDbLabel;
     juce::Label outputTrimDbLabel;
@@ -78,6 +85,7 @@ private:
     SliderAtt outputTrimAtt;
     SliderAtt tightAtt;
     ButtonAtt footswitchAtt;    // "active"
+    SliderAtt gateAtt;          // "gateThresh"
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SuhrRiotEditor)
 };

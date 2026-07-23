@@ -61,8 +61,10 @@ target_sources(SuhrRiot
         Source/dsp/OutputStage.cpp
         Source/gui/PedalLookAndFeel.cpp
         Source/gui/ModeSwitch.cpp
+        Source/gui/OsSwitch.cpp
         Source/dsp/TrimStage.cpp
         Source/dsp/TightFilter.cpp
+        Source/dsp/NoiseGate.cpp
 )
 
 # ---------------------------------------------------------------------------

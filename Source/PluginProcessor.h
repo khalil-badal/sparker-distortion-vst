@@ -8,6 +8,7 @@
 #include "dsp/ClippingStage.h"
 #include "dsp/ToneStack.h"
 #include "dsp/OutputStage.h"
+#include "dsp/NoiseGate.h"
 
 // ---------------------------------------------------------------------------
 // SuhrRiotProcessor — the "brain" of the plugin.
@@ -73,6 +74,7 @@ private:
     // DSP chain — one object per circuit block, processed in signal-flow order.
     // -----------------------------------------------------------------------
     TrimStage     inputTrim;        // ±12 dB gain before drive chain
+    NoiseGate     noiseGate;       // input gate — silences idle noise before the drive
     InputStage    inputStage;      // C1/R1 AC coupling + RF filter
     TightFilter   tightFilter;     // pre-distortion Butterworth HPF (20–500 Hz)
     DriveStage    driveStage;      // U1B variable gain + bass shaping
