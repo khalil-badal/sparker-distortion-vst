@@ -64,6 +64,36 @@ static constexpr int   kModePY   = 256;
 static constexpr int   kModePW   = 114;
 static constexpr int   kModePH   = 72;
 
+// Circuit selector (Ember/Burner/Blazer) — above the MODE panel.
+static constexpr int   kCircuitPX = 462;
+static constexpr int   kCircuitPY = 168;
+static constexpr int   kCircuitPW = 114;
+static constexpr int   kCircuitPH = 60;
+
+// Burner-only controls. Gain/Volume reuse the DRIVE/LEVEL knob slots
+// (never shown at the same time as Ember's own knobs).
+static constexpr float kBurnerRowY  = kToneY;      // Bass/Mid/Treble row
+static constexpr float kBurnerKnobD = 58.0f;
+static constexpr float kBurnerBassX    = kPedalX + 51.0f;                         // 157
+static constexpr float kBurnerMidX     = kPedalCX - kBurnerKnobD * 0.5f;          // 266
+static constexpr float kBurnerTrebleX  = kPedalX + kPedalW - 51.0f - kBurnerKnobD; // 375
+
+// Aggression toggle — reuses the TIGHT knob's outer-left slot.
+static constexpr int kAggressionX = 16;
+static constexpr int kAggressionY = 268;
+static constexpr int kAggressionW = 80;
+static constexpr int kAggressionH = 52;
+
+// Blazer-only controls. Gain/Volume reuse the DRIVE/LEVEL knob slots (same
+// as Burner). Bass/Treble/Presence share Burner's 3-knob row slots exactly
+// (Bass/Mid/Treble x-positions), since only one mode's knobs are ever
+// visible at once. Tight reuses Ember's own TIGHT knob slot — same control
+// concept, same position. Trim is a small "advanced" knob reusing the GATE
+// knob's outer-left slot, sized down to read as secondary.
+static constexpr float kBlazerTrimD = 30.0f;   // smaller than a main knob
+static constexpr float kBlazerTrimX = kGateKnobX + (kGateKnobD - kBlazerTrimD) * 0.5f;
+static constexpr float kBlazerTrimY = kGateKnobY + (kGateKnobD - kBlazerTrimD) * 0.5f;
+
 // ============================================================================
 // Letter-spaced text helper
 // Draws each character individually with extra spacing between them,
@@ -113,7 +143,21 @@ SuhrRiotEditor::SuhrRiotEditor (SuhrRiotProcessor& p)
       tightAtt        (p.apvts, "tightFreq",   tightKnob),
       footswitchAtt   (p.apvts, "active",      footswitch),
       osSwitch        (p.apvts, laf),
-      gateAtt         (p.apvts, "gateThresh",  gateKnob)
+      gateAtt         (p.apvts, "gateThresh",  gateKnob),
+      circuitSwitch   (p.apvts, laf),
+      aggressionSwitch (p.apvts, laf),
+      burnerGainAtt    (p.apvts, "burnerGain",   burnerGainKnob),
+      burnerVolumeAtt  (p.apvts, "burnerVolume", burnerVolumeKnob),
+      burnerBassAtt    (p.apvts, "burnerBass",   burnerBassKnob),
+      burnerMidAtt     (p.apvts, "burnerMid",    burnerMidKnob),
+      burnerTrebleAtt  (p.apvts, "burnerTreble", burnerTrebleKnob),
+      blazerGainAtt     (p.apvts, "blazerGain",     blazerGainKnob),
+      blazerVolumeAtt   (p.apvts, "blazerVolume",   blazerVolumeKnob),
+      blazerBassAtt     (p.apvts, "blazerBass",     blazerBassKnob),
+      blazerTrebleAtt   (p.apvts, "blazerTreble",   blazerTrebleKnob),
+      blazerPresenceAtt (p.apvts, "blazerPresence", blazerPresenceKnob),
+      blazerTightAtt    (p.apvts, "blazerTight",    blazerTightKnob),
+      blazerTrimAtt     (p.apvts, "blazerTrim",     blazerTrimKnob)
 {
     // Rotary knobs
     for (auto* s : { &driveKnob, &toneKnob, &levelKnob,
@@ -147,6 +191,30 @@ SuhrRiotEditor::SuhrRiotEditor (SuhrRiotProcessor& p)
     addAndMakeVisible (modeSwitch);
     addAndMakeVisible (osSwitch);
 
+    // Burner-only rotary knobs — use BurnerLookAndFeel (violet accent).
+    for (auto* s : { &burnerGainKnob, &burnerVolumeKnob, &burnerBassKnob,
+                     &burnerMidKnob, &burnerTrebleKnob })
+    {
+        s->setLookAndFeel (&burnerLaf);
+        s->setSliderStyle (juce::Slider::RotaryVerticalDrag);
+        s->setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        addAndMakeVisible (*s);
+    }
+
+    addAndMakeVisible (circuitSwitch);
+    addAndMakeVisible (aggressionSwitch);
+
+    // Blazer-only rotary knobs — use BlazerLookAndFeel (gold accent).
+    for (auto* s : { &blazerGainKnob, &blazerVolumeKnob, &blazerBassKnob,
+                     &blazerTrebleKnob, &blazerPresenceKnob, &blazerTightKnob,
+                     &blazerTrimKnob })
+    {
+        s->setLookAndFeel (&blazerLaf);
+        s->setSliderStyle (juce::Slider::RotaryVerticalDrag);
+        s->setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        addAndMakeVisible (*s);
+    }
+
     startTimerHz (15);
     setSize (kW, kH);
 }
@@ -158,6 +226,15 @@ SuhrRiotEditor::~SuhrRiotEditor()
                      &inputTrimKnob, &outputTrimKnob, &tightKnob, &gateKnob })
         s->setLookAndFeel (nullptr);
     footswitch.setLookAndFeel (nullptr);
+
+    for (auto* s : { &burnerGainKnob, &burnerVolumeKnob, &burnerBassKnob,
+                     &burnerMidKnob, &burnerTrebleKnob })
+        s->setLookAndFeel (nullptr);
+
+    for (auto* s : { &blazerGainKnob, &blazerVolumeKnob, &blazerBassKnob,
+                     &blazerTrebleKnob, &blazerPresenceKnob, &blazerTightKnob,
+                     &blazerTrimKnob })
+        s->setLookAndFeel (nullptr);
 }
 
 // ============================================================================
@@ -176,6 +253,44 @@ void SuhrRiotEditor::timerCallback()
     inputTrimDbLabel .setText (fmtDb (inTrim),  juce::dontSendNotification);
     outputTrimDbLabel.setText (fmtDb (outTrim), juce::dontSendNotification);
 
+    // -------------------------------------------------------------------
+    // Circuit-mode visibility routing. Ember's own components are never
+    // modified — only shown/hidden depending on which circuit is active.
+    // -------------------------------------------------------------------
+    const int circuit = static_cast<int> (processorRef.apvts.getRawParameterValue ("circuit")->load());
+    if (circuit != lastEditorCircuit)
+    {
+        lastEditorCircuit = circuit;
+        const bool emberActive  = (circuit == 0);
+        const bool burnerActive = (circuit == 1);
+        const bool blazerActive = (circuit == 2);
+
+        // Ember-only controls
+        for (auto* c : { (juce::Component*) &driveKnob, (juce::Component*) &toneKnob,
+                         (juce::Component*) &levelKnob, (juce::Component*) &tightKnob,
+                         (juce::Component*) &gateKnob,  (juce::Component*) &modeSwitch,
+                         (juce::Component*) &osSwitch,  (juce::Component*) &inputTrimKnob,
+                         (juce::Component*) &outputTrimKnob,
+                         (juce::Component*) &inputTrimDbLabel,
+                         (juce::Component*) &outputTrimDbLabel })
+            c->setVisible (emberActive);
+
+        // Burner-only controls
+        for (auto* c : { (juce::Component*) &burnerGainKnob, (juce::Component*) &burnerVolumeKnob,
+                         (juce::Component*) &burnerBassKnob, (juce::Component*) &burnerMidKnob,
+                         (juce::Component*) &burnerTrebleKnob, (juce::Component*) &aggressionSwitch })
+            c->setVisible (burnerActive);
+
+        // Blazer-only controls
+        for (auto* c : { (juce::Component*) &blazerGainKnob, (juce::Component*) &blazerVolumeKnob,
+                         (juce::Component*) &blazerBassKnob, (juce::Component*) &blazerTrebleKnob,
+                         (juce::Component*) &blazerPresenceKnob, (juce::Component*) &blazerTightKnob,
+                         (juce::Component*) &blazerTrimKnob })
+            c->setVisible (blazerActive);
+
+        // Footswitch (bypass) and CircuitSwitch itself stay visible always.
+    }
+
     repaint();
 }
 
@@ -189,6 +304,28 @@ void SuhrRiotEditor::paint (juce::Graphics& g)
     // -----------------------------------------------------------------------
     laf.drawPluginBackground (g, getWidth(), getHeight());
 
+    const int circuit      = static_cast<int> (processorRef.apvts.getRawParameterValue ("circuit")->load());
+    const bool emberActive  = (circuit == 0);
+    const bool burnerActive = (circuit == 1);
+    const bool blazerActive = (circuit == 2);
+
+    // Burner/Blazer colorway: subtle accent-tinted bloom overlay on top of
+    // the shared black background (does not touch drawPluginBackground
+    // itself, which stays Ember's original purple bloom).
+    if (burnerActive || blazerActive)
+    {
+        const uint32_t accent = burnerActive ? BurnerLookAndFeel::kAccent : BlazerLookAndFeel::kAccent;
+        const float cx = (float) getWidth() * 0.5f;
+        const float cy = (float) getHeight() * 0.48f;
+        const float radius = (float) juce::jmax (getWidth(), getHeight()) * 0.65f;
+        juce::ColourGradient bloom (
+            juce::Colour (accent).withAlpha (0.05f), cx, cy,
+            juce::Colour (accent).withAlpha (0.0f), cx, cy + radius,
+            true);
+        g.setGradientFill (bloom);
+        g.fillRect (0, 0, getWidth(), getHeight());
+    }
+
     // -----------------------------------------------------------------------
     // 2. Parameter labels — Inter Medium 10pt, near-white
     // -----------------------------------------------------------------------
@@ -198,17 +335,74 @@ void SuhrRiotEditor::paint (juce::Graphics& g)
     g.setFont (lblFont);
     g.setColour (lblCol);
 
-    g.drawText ("DRIVE",
-                (int) kDistX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
-                juce::Justification::centred);
+    if (emberActive)
+    {
+        g.drawText ("DRIVE",
+                    (int) kDistX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
+                    juce::Justification::centred);
 
-    g.drawText ("LEVEL",
-                (int) kLevelX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
-                juce::Justification::centred);
+        g.drawText ("LEVEL",
+                    (int) kLevelX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
+                    juce::Justification::centred);
 
-    g.drawText ("TONE",
-                (int) kToneX, (int) (kToneY - 15.0f), (int) kToneD, 13,
-                juce::Justification::centred);
+        g.drawText ("TONE",
+                    (int) kToneX, (int) (kToneY - 15.0f), (int) kToneD, 13,
+                    juce::Justification::centred);
+    }
+    else if (burnerActive)
+    {
+        g.drawText ("GAIN",
+                    (int) kDistX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
+                    juce::Justification::centred);
+
+        g.drawText ("VOLUME",
+                    (int) kLevelX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
+                    juce::Justification::centred);
+
+        g.drawText ("BASS",
+                    (int) kBurnerBassX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
+                    juce::Justification::centred);
+        g.drawText ("MID",
+                    (int) kBurnerMidX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
+                    juce::Justification::centred);
+        g.drawText ("TREBLE",
+                    (int) kBurnerTrebleX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
+                    juce::Justification::centred);
+    }
+    else if (blazerActive)
+    {
+        g.drawText ("GAIN",
+                    (int) kDistX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
+                    juce::Justification::centred);
+
+        g.drawText ("VOLUME",
+                    (int) kLevelX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
+                    juce::Justification::centred);
+
+        g.drawText ("BASS",
+                    (int) kBurnerBassX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
+                    juce::Justification::centred);
+        g.drawText ("TREBLE",
+                    (int) kBurnerMidX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
+                    juce::Justification::centred);
+        g.drawText ("PRES",
+                    (int) kBurnerTrebleX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
+                    juce::Justification::centred);
+
+        g.drawText ("TIGHT",
+                    (int) kTightX, (int) (kTightY - 15.0f), (int) kTightD, 13,
+                    juce::Justification::centred);
+
+        // Trim label — small, dim, "advanced parameter" treatment.
+        g.setFont (laf.regularFont (7.5f));
+        g.setColour (lblCol.withAlpha (0.5f));
+        g.drawText ("TRIM",
+                    (int) kBlazerTrimX - 5, (int) (kBlazerTrimY + kBlazerTrimD + 2.0f),
+                    (int) kBlazerTrimD + 10, 10,
+                    juce::Justification::centred);
+        g.setFont (lblFont);
+        g.setColour (lblCol);
+    }
 
 
     // -----------------------------------------------------------------------
@@ -268,76 +462,80 @@ void SuhrRiotEditor::paint (juce::Graphics& g)
                 juce::Justification::centred);
 
     // -----------------------------------------------------------------------
-    // 6. Outer-area labels — Inter Medium 10pt
+    // 6. Outer-area labels — Inter Medium 10pt (Ember-only: these describe
+    //    Ember-only components, which are hidden outside Ember mode)
     // -----------------------------------------------------------------------
-    g.setFont (lblFont);
-    g.setColour (lblCol);
-
-    g.drawText ("INPUT",
-                (int) kTrimLX, (int) (kTrimY + kTrimD + 6.0f), (int) kTrimD, 12,
-                juce::Justification::centred);
-
-    g.drawText ("OUTPUT",
-                (int) kTrimRX, (int) (kTrimY + kTrimD + 6.0f), (int) kTrimD, 12,
-                juce::Justification::centred);
-
-    g.drawText ("TIGHT",
-                (int) kTightX, (int) (kTightY + kTightD + 6.0f), (int) kTightD, 12,
-                juce::Justification::centred);
-
-    g.setFont (laf.semiBoldFont (9.0f));
-    g.setColour (juce::Colour (0xff7755aa));
-    g.drawText ("OS:",
-                kOsLabelX, kOsY, 24, kOsH,
-                juce::Justification::centredLeft);
-
-    g.setFont (lblFont);
-    g.setColour (lblCol);
-    g.drawText ("GATE",
-                (int) kGateKnobX, (int) (kGateKnobY + kGateKnobD + 6.0f),
-                (int) kGateKnobD, 12,
-                juce::Justification::centred);
-
-    // -----------------------------------------------------------------------
-    // 7. dB tick-mark scales beside the trim knobs (colors unchanged)
-    // -----------------------------------------------------------------------
+    if (emberActive)
     {
-        const float scaleX   = kTrimLX + kTrimD + 9.0f;
-        const float scaleTop = kTrimY + 5.0f;
-        const float scaleBot = kTrimY + kTrimD - 5.0f;
-        const float scaleH   = scaleBot - scaleTop;
-        const juce::Colour scaleCol (0xff3d2a55);
+        g.setFont (lblFont);
+        g.setColour (lblCol);
 
-        g.setColour (scaleCol);
-        g.drawLine (scaleX, scaleTop, scaleX, scaleBot, 0.6f);
+        g.drawText ("INPUT",
+                    (int) kTrimLX, (int) (kTrimY + kTrimD + 6.0f), (int) kTrimD, 12,
+                    juce::Justification::centred);
 
-        const float dbs[] = { -12.0f, -6.0f, 0.0f, 6.0f, 12.0f };
-        for (float db : dbs)
+        g.drawText ("OUTPUT",
+                    (int) kTrimRX, (int) (kTrimY + kTrimD + 6.0f), (int) kTrimD, 12,
+                    juce::Justification::centred);
+
+        g.drawText ("TIGHT",
+                    (int) kTightX, (int) (kTightY + kTightD + 6.0f), (int) kTightD, 12,
+                    juce::Justification::centred);
+
+        g.setFont (laf.semiBoldFont (9.0f));
+        g.setColour (juce::Colour (0xff7755aa));
+        g.drawText ("OS:",
+                    kOsLabelX, kOsY, 24, kOsH,
+                    juce::Justification::centredLeft);
+
+        g.setFont (lblFont);
+        g.setColour (lblCol);
+        g.drawText ("GATE",
+                    (int) kGateKnobX, (int) (kGateKnobY + kGateKnobD + 6.0f),
+                    (int) kGateKnobD, 12,
+                    juce::Justification::centred);
+
+        // -------------------------------------------------------------------
+        // 7. dB tick-mark scales beside the trim knobs (colors unchanged)
+        // -------------------------------------------------------------------
         {
-            const float t   = (db + 12.0f) / 24.0f;
-            const float ty  = scaleTop + t * scaleH;
-            const float len = (db == 0.0f) ? 7.0f : 4.5f;
-            g.drawLine (scaleX, ty, scaleX + len, ty, 0.7f);
+            const float scaleX   = kTrimLX + kTrimD + 9.0f;
+            const float scaleTop = kTrimY + 5.0f;
+            const float scaleBot = kTrimY + kTrimD - 5.0f;
+            const float scaleH   = scaleBot - scaleTop;
+            const juce::Colour scaleCol (0xff3d2a55);
+
+            g.setColour (scaleCol);
+            g.drawLine (scaleX, scaleTop, scaleX, scaleBot, 0.6f);
+
+            const float dbs[] = { -12.0f, -6.0f, 0.0f, 6.0f, 12.0f };
+            for (float db : dbs)
+            {
+                const float t   = (db + 12.0f) / 24.0f;
+                const float ty  = scaleTop + t * scaleH;
+                const float len = (db == 0.0f) ? 7.0f : 4.5f;
+                g.drawLine (scaleX, ty, scaleX + len, ty, 0.7f);
+            }
         }
-    }
 
-    {
-        const float scaleX   = kTrimRX - 9.0f;
-        const float scaleTop = kTrimY + 5.0f;
-        const float scaleBot = kTrimY + kTrimD - 5.0f;
-        const float scaleH   = scaleBot - scaleTop;
-        const juce::Colour scaleCol (0xff3d2a55);
-
-        g.setColour (scaleCol);
-        g.drawLine (scaleX, scaleTop, scaleX, scaleBot, 0.6f);
-
-        const float dbs[] = { -12.0f, -6.0f, 0.0f, 6.0f, 12.0f };
-        for (float db : dbs)
         {
-            const float t   = (db + 12.0f) / 24.0f;
-            const float ty  = scaleTop + t * scaleH;
-            const float len = (db == 0.0f) ? 7.0f : 4.5f;
-            g.drawLine (scaleX - len, ty, scaleX, ty, 0.7f);
+            const float scaleX   = kTrimRX - 9.0f;
+            const float scaleTop = kTrimY + 5.0f;
+            const float scaleBot = kTrimY + kTrimD - 5.0f;
+            const float scaleH   = scaleBot - scaleTop;
+            const juce::Colour scaleCol (0xff3d2a55);
+
+            g.setColour (scaleCol);
+            g.drawLine (scaleX, scaleTop, scaleX, scaleBot, 0.6f);
+
+            const float dbs[] = { -12.0f, -6.0f, 0.0f, 6.0f, 12.0f };
+            for (float db : dbs)
+            {
+                const float t   = (db + 12.0f) / 24.0f;
+                const float ty  = scaleTop + t * scaleH;
+                const float len = (db == 0.0f) ? 7.0f : 4.5f;
+                g.drawLine (scaleX - len, ty, scaleX, ty, 0.7f);
+            }
         }
     }
 }
@@ -378,4 +576,25 @@ void SuhrRiotEditor::resized()
 
     // Mode panel
     modeSwitch.setBounds (kModePX, kModePY, kModePW, kModePH);
+
+    // Circuit selector
+    circuitSwitch.setBounds (kCircuitPX, kCircuitPY, kCircuitPW, kCircuitPH);
+
+    // Burner-only controls — Gain/Volume reuse the DRIVE/LEVEL slots.
+    burnerGainKnob  .setBounds ((int) kDistX,  (int) kTopKnobY, (int) kTopKnobD, (int) kTopKnobD);
+    burnerVolumeKnob.setBounds ((int) kLevelX, (int) kTopKnobY, (int) kTopKnobD, (int) kTopKnobD);
+    burnerBassKnob  .setBounds ((int) kBurnerBassX,   (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
+    burnerMidKnob   .setBounds ((int) kBurnerMidX,    (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
+    burnerTrebleKnob.setBounds ((int) kBurnerTrebleX, (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
+
+    aggressionSwitch.setBounds (kAggressionX, kAggressionY, kAggressionW, kAggressionH);
+
+    // Blazer-only controls
+    blazerGainKnob    .setBounds ((int) kDistX,  (int) kTopKnobY, (int) kTopKnobD, (int) kTopKnobD);
+    blazerVolumeKnob  .setBounds ((int) kLevelX, (int) kTopKnobY, (int) kTopKnobD, (int) kTopKnobD);
+    blazerBassKnob    .setBounds ((int) kBurnerBassX,   (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
+    blazerTrebleKnob  .setBounds ((int) kBurnerMidX,    (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
+    blazerPresenceKnob.setBounds ((int) kBurnerTrebleX, (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
+    blazerTightKnob   .setBounds ((int) kTightX, (int) kTightY, (int) kTightD, (int) kTightD);
+    blazerTrimKnob    .setBounds ((int) kBlazerTrimX, (int) kBlazerTrimY, (int) kBlazerTrimD, (int) kBlazerTrimD);
 }

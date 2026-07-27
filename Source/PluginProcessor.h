@@ -1,14 +1,11 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "dsp/InputStage.h"
-#include "dsp/TrimStage.h"
-#include "dsp/TightFilter.h"
-#include "dsp/DriveStage.h"
-#include "dsp/ClippingStage.h"
-#include "dsp/ToneStack.h"
-#include "dsp/OutputStage.h"
-#include "dsp/NoiseGate.h"
+#include "CircuitMode.h"
+#include "ParameterRanges.h"
+#include "dsp/EmberCircuit.h"
+#include "dsp/BurnerCircuit.h"
+#include "dsp/BlazerCircuit.h"
 
 // ---------------------------------------------------------------------------
 // SuhrRiotProcessor — the "brain" of the plugin.
@@ -71,17 +68,33 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     // -----------------------------------------------------------------------
-    // DSP chain — one object per circuit block, processed in signal-flow order.
+    // DSP chain — one circuit model per CircuitMode. Only the active mode's
+    // circuit is processed each block; the other two sit idle.
+    //
+    // EMBER (Suhr Riot) is a verbatim wrap of the pre-existing Riot signal
+    // chain — see dsp/EmberCircuit.h. BURNER (REVV G3) and BLAZER
+    // (Friedman BE-OD) are silent pass-through stubs pending their own DSP
+    // implementation.
     // -----------------------------------------------------------------------
-    TrimStage     inputTrim;        // ±12 dB gain before drive chain
-    NoiseGate     noiseGate;       // input gate — silences idle noise before the drive
-    InputStage    inputStage;      // C1/R1 AC coupling + RF filter
-    TightFilter   tightFilter;     // pre-distortion Butterworth HPF (20–500 Hz)
-    DriveStage    driveStage;      // U1B variable gain + bass shaping
-    ClippingStage clippingStage;   // D1-D8 diode clipper (3 modes, oversampled)
-    ToneStack     toneStack;       // Big Muff RC tone control
-    OutputStage   outputStage;     // U2A recovery gain + Level pot
-    TrimStage     outputTrim;      // ±12 dB final makeup gain
+    EmberCircuit  emberCircuit;
+    BurnerCircuit burnerCircuit;
+    BlazerCircuit blazerCircuit;
+
+    // Tracks the previously-active circuit so a mode switch can reset all
+    // three circuits' internal filter state — an inactive circuit's filters
+    // otherwise freeze mid-state while un-called, then resume from that
+    // stale state on reactivation, producing an audible discontinuity
+    // (measured in Phase 5 integration testing). This never touches
+    // EmberCircuit's internals — only calls its existing public reset().
+    int lastCircuitMode = -1;
+
+    // Short gain ramp applied across a circuit switch. Resetting a circuit's
+    // filters to a cold-zero state while the live input is already
+    // mid-signal causes its own startup transient (measured: resetting
+    // alone was not sufficient — see Phase 5 findings), so this fades the
+    // output in over ~8ms after any switch, masking the transient
+    // regardless of its cause.
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> circuitSwitchGain;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SuhrRiotProcessor)
 };

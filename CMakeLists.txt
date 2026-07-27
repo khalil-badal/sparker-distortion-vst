@@ -65,6 +65,13 @@ target_sources(SuhrRiot
         Source/dsp/TrimStage.cpp
         Source/dsp/TightFilter.cpp
         Source/dsp/NoiseGate.cpp
+        Source/dsp/EmberCircuit.cpp
+        Source/dsp/BurnerCircuit.cpp
+        Source/dsp/BlazerCircuit.cpp
+        Source/gui/CircuitSwitch.cpp
+        Source/gui/AggressionSwitch.cpp
+        Source/gui/BurnerLookAndFeel.cpp
+        Source/gui/BlazerLookAndFeel.cpp
 )
 
 # ---------------------------------------------------------------------------
@@ -88,5 +95,49 @@ target_link_libraries(SuhrRiot
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+# ---------------------------------------------------------------------------
+# Offline integration test harness (Phase 5) — exercises EmberCircuit /
+# BurnerCircuit / BlazerCircuit directly, independent of the plugin/GUI
+# target above. Not shipped with the plugin.
+# ---------------------------------------------------------------------------
+juce_add_console_app(SuhrRiotOfflineTests
+    PRODUCT_NAME "SuhrRiot Offline Tests")
+
+juce_generate_juce_header(SuhrRiotOfflineTests)
+
+target_sources(SuhrRiotOfflineTests
+    PRIVATE
+        Tests/OfflineTests.cpp
+        Source/dsp/EmberCircuit.cpp
+        Source/dsp/BurnerCircuit.cpp
+        Source/dsp/BlazerCircuit.cpp
+        Source/dsp/InputStage.cpp
+        Source/dsp/DriveStage.cpp
+        Source/dsp/ClippingStage.cpp
+        Source/dsp/ToneStack.cpp
+        Source/dsp/OutputStage.cpp
+        Source/dsp/TrimStage.cpp
+        Source/dsp/TightFilter.cpp
+        Source/dsp/NoiseGate.cpp
+)
+
+target_include_directories(SuhrRiotOfflineTests PRIVATE Source)
+
+target_compile_definitions(SuhrRiotOfflineTests
+    PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+)
+
+target_link_libraries(SuhrRiotOfflineTests
+    PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_core
+    PUBLIC
+        juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
 )

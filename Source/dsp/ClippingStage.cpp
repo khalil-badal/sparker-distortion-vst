@@ -39,17 +39,51 @@ static constexpr DiodeVf kDiodeTable[3] =
 // the physically correct behaviour of a shunt clipper, and it is what keeps
 // the plugin quiet between notes.
 // ===========================================================================
-static inline float waveshape (float x, float rail,
-                                float cPos, float cNeg) noexcept
+// ===========================================================================
+// ADAA (antiderivative anti-aliasing) for a single scaled-tanh saturator.
+//
+//   f(v) = k * tanh(v/k)              -- the saturator itself
+//   F(v) = k^2 * ln(cosh(v/k))        -- its antiderivative
+//
+// First-order ADAA replaces f(x_n) with the secant slope of F between the
+// current and previous sample: (F(x_n) - F(x_n-1)) / (x_n - x_n-1). That
+// exactly band-limits the harmonics the nonlinearity generates. When two
+// samples are (nearly) equal the secant is ill-conditioned, so it falls
+// back to evaluating f at the midpoint.
+// ===========================================================================
+static inline float stableLogCosh (float v) noexcept
 {
-    // Op-amp rail saturation (symmetric)
-    x = rail * std::tanh (x / rail);
+    // ln(cosh(v)) = |v| + ln(1 + e^-2|v|) - ln(2), avoids cosh() overflow.
+    const float av = std::abs (v);
+    return av + std::log1p (std::exp (-2.0f * av)) - 0.6931472f;
+}
 
-    // Shunt diode clamp (asymmetric ceilings)
-    if (x >= 0.0f)
-        return cPos * std::tanh (x / cPos);
-    else
-        return cNeg * std::tanh (x / cNeg);
+static inline float fTanhScaled (float v, float k) noexcept { return k * std::tanh (v / k); }
+static inline float FTanhScaled (float v, float k) noexcept { return k * k * stableLogCosh (v / k); }
+
+static inline float adaaTanhScaled (float x, float& xPrev, float k) noexcept
+{
+    const float dx = x - xPrev;
+    const float y  = (std::abs (dx) < 1.0e-5f)
+                        ? fTanhScaled (0.5f * (x + xPrev), k)
+                        : (FTanhScaled (x, k) - FTanhScaled (xPrev, k)) / dx;
+    xPrev = x;
+    return y;
+}
+
+// Diode stage: ceiling is asymmetric (cPos/cNeg). Both F evaluations in a
+// step use the ceiling matching the CURRENT sample's sign — F and its slope
+// both vanish at 0 regardless of which ceiling is used, so this introduces
+// no discontinuity, only a negligible approximation right at a sign flip.
+static inline float adaaDiode (float y, float& yPrev, float cPos, float cNeg) noexcept
+{
+    const float k  = (y >= 0.0f) ? cPos : cNeg;
+    const float dy = y - yPrev;
+    const float out = (std::abs (dy) < 1.0e-5f)
+                        ? fTanhScaled (0.5f * (y + yPrev), k)
+                        : (FTanhScaled (y, k) - FTanhScaled (yPrev, k)) / dy;
+    yPrev = y;
+    return out;
 }
 
 // ===========================================================================
@@ -75,6 +109,12 @@ void ClippingStage::prepare (double /*sampleRate*/, int samplesPerBlock)
     os2x.initProcessing (n);  os2x.reset();
     os4x.initProcessing (n);  os4x.reset();
     os8x.initProcessing (n);  os8x.reset();
+
+    for (int ch = 0; ch < kMaxChannels; ++ch)
+    {
+        railXPrev[ch]  = 0.0f;
+        diodeYPrev[ch] = 0.0f;
+    }
 }
 
 void ClippingStage::process (juce::AudioBuffer<float>& buffer)
@@ -97,8 +137,15 @@ void ClippingStage::process (juce::AudioBuffer<float>& buffer)
     for (size_t ch = 0; ch < numCh; ++ch)
     {
         float* data = upsampledBlock.getChannelPointer (ch);
+        const auto chIdx = juce::jmin (static_cast<int> (ch), kMaxChannels - 1);
+
         for (size_t i = 0; i < numSamples; ++i)
-            data[i] = outNorm * waveshape (c.preGain * data[i], kRail, c.cPos, c.cNeg);
+        {
+            const float x = c.preGain * data[i];
+            const float y = adaaTanhScaled (x, railXPrev[chIdx], kRail);
+            const float o = adaaDiode (y, diodeYPrev[chIdx], c.cPos, c.cNeg);
+            data[i] = outNorm * o;
+        }
     }
 
     os.processSamplesDown (inputBlock);
@@ -113,6 +160,14 @@ void ClippingStage::setOversamplingOrder (int order)
     os2x.reset();
     os4x.reset();
     os8x.reset();
+
+    // The oversampled sample stream is discontinuous across an OS switch —
+    // flush the ADAA secant history too, same reason as the oversamplers.
+    for (int ch = 0; ch < kMaxChannels; ++ch)
+    {
+        railXPrev[ch]  = 0.0f;
+        diodeYPrev[ch] = 0.0f;
+    }
 }
 
 void ClippingStage::setMode (int mode)
@@ -125,4 +180,10 @@ void ClippingStage::reset()
     os2x.reset();
     os4x.reset();
     os8x.reset();
+
+    for (int ch = 0; ch < kMaxChannels; ++ch)
+    {
+        railXPrev[ch]  = 0.0f;
+        diodeYPrev[ch] = 0.0f;
+    }
 }

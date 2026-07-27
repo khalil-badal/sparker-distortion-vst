@@ -73,6 +73,16 @@ private:
 
     int currentMode = 0;
 
+    // ADAA (antiderivative anti-aliasing) state — one (x, y) pair per channel,
+    // carried across blocks so there's no seam at block boundaries. The rail
+    // and diode saturators are each first-order-ADAA'd independently: there's
+    // no closed-form antiderivative for the two composed together, but
+    // band-limiting each stage's own harmonics before the next nonlinearity
+    // is the standard cascaded-ADAA approach.
+    static constexpr int kMaxChannels = 2;
+    float railXPrev[kMaxChannels]  = { 0.0f, 0.0f };
+    float diodeYPrev[kMaxChannels] = { 0.0f, 0.0f };
+
     // Three pre-allocated oversamplers — JUCE's Oversampling order is fixed at
     // construction, so all three live in memory; only the selected one is used.
     using OvS = juce::dsp::Oversampling<float>;

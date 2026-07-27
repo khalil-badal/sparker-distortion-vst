@@ -40,6 +40,12 @@ SuhrRiotProcessor::createParameterLayout()
         juce::ParameterID { "mode", 1 }, "Mode",
         juce::StringArray { "Germanium", "Silicon", "LED" }, 0));
 
+    // Circuit — top-level pedal-model selector. 0=Ember (Suhr Riot),
+    // 1=Burner (REVV G3, stub), 2=Blazer (Friedman BE-OD, stub).
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "circuit", 1 }, "Circuit",
+        juce::StringArray { "Ember", "Burner", "Blazer" }, 0));
+
     // Active (bypass) — true = effect engaged, false = hard bypass (dry pass-through).
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "active", 1 }, "Active", true));
@@ -77,6 +83,58 @@ SuhrRiotProcessor::createParameterLayout()
         juce::ParameterID { "outputTrim", 1 }, "Output Trim",
         juce::NormalisableRange<float> (-12.0f, 12.0f), 0.0f));
 
+    // -----------------------------------------------------------------------
+    // Burner (REVV G3) parameters — ranges/tapers from getParameterRanges()
+    // (Phase 4). Gain/Mid are linear (B1M/B100k pots feeding stages whose
+    // own gain math is already logarithmic); Volume/Bass/Treble get an
+    // audio-taper skew (A50k/A100k attenuators/shelves). See
+    // ParameterRanges.h for the full rationale.
+    // -----------------------------------------------------------------------
+    const auto burnerRanges = getParameterRanges (CircuitMode::BURNER);
+
+    auto makeBurnerParam = [&burnerRanges] (const char* paramId, const char* displayName)
+    {
+        const auto& r = burnerRanges.at (paramId);
+        return std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { paramId, 1 }, displayName,
+            juce::NormalisableRange<float> (r.min, r.max, 0.0f, r.skew), r.defaultValue);
+    };
+
+    params.push_back (makeBurnerParam ("burnerGain",   "Burner Gain"));
+    params.push_back (makeBurnerParam ("burnerVolume", "Burner Volume"));
+    params.push_back (makeBurnerParam ("burnerBass",   "Burner Bass"));
+    params.push_back (makeBurnerParam ("burnerMid",    "Burner Mid"));
+    params.push_back (makeBurnerParam ("burnerTreble", "Burner Treble"));
+
+    // Aggression — 2-position switch (SW1, DPDT ON-ON). 0 = one 2n2 cap
+    // active, 1 = both 2n2 caps in parallel (4n4). See BurnerCircuit.h.
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "burnerAggression", 1 }, "Aggression",
+        juce::StringArray { "1", "2" }, 0));
+
+    // -----------------------------------------------------------------------
+    // Blazer (Friedman BE-OD) parameters — ranges/tapers from
+    // getParameterRanges() (Phase 9). Several are C-taper (reverse-audio):
+    // Tight/Bass/Presence. See ParameterRanges.h for the full rationale.
+    // -----------------------------------------------------------------------
+    const auto blazerRanges = getParameterRanges (CircuitMode::BLAZER);
+
+    auto makeBlazerParam = [&blazerRanges] (const char* paramId, const char* displayName)
+    {
+        const auto& r = blazerRanges.at (paramId);
+        return std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { paramId, 1 }, displayName,
+            juce::NormalisableRange<float> (r.min, r.max, 0.0f, r.skew), r.defaultValue);
+    };
+
+    params.push_back (makeBlazerParam ("blazerGain",     "Blazer Gain"));
+    params.push_back (makeBlazerParam ("blazerVolume",   "Blazer Volume"));
+    params.push_back (makeBlazerParam ("blazerBass",     "Blazer Bass"));
+    params.push_back (makeBlazerParam ("blazerTreble",   "Blazer Treble"));
+    params.push_back (makeBlazerParam ("blazerPresence", "Blazer Presence"));
+    params.push_back (makeBlazerParam ("blazerTight",    "Blazer Tight"));
+    params.push_back (makeBlazerParam ("blazerTrim",     "Blazer Trim"));
+
     return { params.begin(), params.end() };
 }
 
@@ -104,32 +162,26 @@ SuhrRiotProcessor::~SuhrRiotProcessor() {}
 
 void SuhrRiotProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // Give each DSP stage a chance to allocate its internal buffers and
+    // Give each circuit a chance to allocate its internal buffers and
     // compute sample-rate-dependent values (filter coefficients, etc.).
-    inputTrim    .prepare (sampleRate, samplesPerBlock);
-    noiseGate    .prepare (sampleRate, samplesPerBlock);
-    inputStage   .prepare (sampleRate, samplesPerBlock);
-    tightFilter  .prepare (sampleRate, samplesPerBlock);
-    driveStage   .prepare (sampleRate, samplesPerBlock);
-    clippingStage.prepare (sampleRate, samplesPerBlock);
-    toneStack    .prepare (sampleRate, samplesPerBlock);
-    outputStage  .prepare (sampleRate, samplesPerBlock);
-    outputTrim   .prepare (sampleRate, samplesPerBlock);
+    // All three are prepared regardless of the active mode, so switching
+    // circuits mid-session never hits an unprepared object.
+    emberCircuit .prepare (sampleRate, samplesPerBlock);
+    burnerCircuit.prepare (sampleRate, samplesPerBlock);
+    blazerCircuit.prepare (sampleRate, samplesPerBlock);
+
+    circuitSwitchGain.reset (sampleRate, 0.008); // 8 ms fade across a circuit switch
+    circuitSwitchGain.setCurrentAndTargetValue (1.0f);
+    lastCircuitMode = -1;
 }
 
 void SuhrRiotProcessor::releaseResources()
 {
     // Flush all internal filter states and delay lines.
     // Called when playback stops or the plugin is unloaded.
-    inputTrim    .reset();
-    noiseGate    .reset();
-    inputStage   .reset();
-    tightFilter  .reset();
-    driveStage   .reset();
-    clippingStage.reset();
-    toneStack    .reset();
-    outputStage  .reset();
-    outputTrim   .reset();
+    emberCircuit .reset();
+    burnerCircuit.reset();
+    blazerCircuit.reset();
 }
 
 // ===========================================================================
@@ -160,28 +212,70 @@ void SuhrRiotProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const float outTrimDb   = apvts.getRawParameterValue ("outputTrim") ->load();
     const int   osOrder     = static_cast<int> (apvts.getRawParameterValue ("osOrder")->load());
     const float gateThresh  = apvts.getRawParameterValue ("gateThresh")->load();
+    const auto  circuitMode = static_cast<CircuitMode> (
+                                   static_cast<int> (apvts.getRawParameterValue ("circuit")->load()));
 
-    inputTrim    .setTrimDb     (inputTrimDb);
-    noiseGate    .setThreshold  (gateThresh);
-    tightFilter  .setFrequency  (tightFreq);
-    driveStage   .setDrive      (drive);
-    clippingStage.setMode       (mode);
-    clippingStage.setOversamplingOrder (osOrder);
-    toneStack    .setTone      (tone);
-    outputStage  .setLevel     (level);
-    outputTrim   .setTrimDb    (outTrimDb);
+    // Reset all three circuits on a mode switch — an inactive circuit's
+    // filters otherwise freeze mid-state while un-called and resume from
+    // stale state on reactivation, causing an audible discontinuity
+    // (Phase 5 finding). This is a discrete, rare event (user clicking the
+    // switch), not a per-block cost.
+    if (static_cast<int> (circuitMode) != lastCircuitMode)
+    {
+        emberCircuit.reset();
+        burnerCircuit.reset();
+        blazerCircuit.reset();
+        lastCircuitMode = static_cast<int> (circuitMode);
 
-    // Signal chain:
-    //   Input Trim → Gate → AC coupling → Tight HPF → Drive amp → Clipper → Tone → Level → Output Trim
-    inputTrim    .process (buffer);
-    noiseGate    .process (buffer);
-    inputStage   .process (buffer);
-    tightFilter  .process (buffer);
-    driveStage   .process (buffer);
-    clippingStage.process (buffer);
-    toneStack    .process (buffer);
-    outputStage  .process (buffer);
-    outputTrim   .process (buffer);
+        // Fade the output in over ~8ms to mask the filter-startup transient
+        // a cold reset causes against an already-live input signal.
+        circuitSwitchGain.setCurrentAndTargetValue (0.0f);
+        circuitSwitchGain.setTargetValue (1.0f);
+    }
+
+    // Route to the active circuit only — the other two sit idle this block.
+    switch (circuitMode)
+    {
+        case CircuitMode::EMBER:
+            emberCircuit.process (buffer, drive, tone, level, mode,
+                                   inputTrimDb, tightFreq, outTrimDb,
+                                   osOrder, gateThresh);
+            break;
+
+        case CircuitMode::BURNER:
+            burnerCircuit.setGain       (apvts.getRawParameterValue ("burnerGain")      ->load());
+            burnerCircuit.setVolume     (apvts.getRawParameterValue ("burnerVolume")    ->load());
+            burnerCircuit.setBass       (apvts.getRawParameterValue ("burnerBass")      ->load());
+            burnerCircuit.setMid        (apvts.getRawParameterValue ("burnerMid")       ->load());
+            burnerCircuit.setTreble     (apvts.getRawParameterValue ("burnerTreble")    ->load());
+            burnerCircuit.setAggression (static_cast<int> (apvts.getRawParameterValue ("burnerAggression")->load()));
+            burnerCircuit.process (buffer);
+            break;
+
+        case CircuitMode::BLAZER:
+            blazerCircuit.setGain     (apvts.getRawParameterValue ("blazerGain")    ->load());
+            blazerCircuit.setVolume   (apvts.getRawParameterValue ("blazerVolume")  ->load());
+            blazerCircuit.setBass     (apvts.getRawParameterValue ("blazerBass")    ->load());
+            blazerCircuit.setTreble   (apvts.getRawParameterValue ("blazerTreble")  ->load());
+            blazerCircuit.setPresence (apvts.getRawParameterValue ("blazerPresence")->load());
+            blazerCircuit.setTight    (apvts.getRawParameterValue ("blazerTight")   ->load());
+            blazerCircuit.setTrim     (apvts.getRawParameterValue ("blazerTrim")    ->load());
+            blazerCircuit.process (buffer);
+            break;
+    }
+
+    // Apply the switch fade (a no-op multiply-by-1 once settled).
+    if (circuitSwitchGain.isSmoothing())
+    {
+        const int numSamples  = buffer.getNumSamples();
+        const int numChannels = buffer.getNumChannels();
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float g = circuitSwitchGain.getNextValue();
+            for (int ch = 0; ch < numChannels; ++ch)
+                buffer.getWritePointer (ch)[i] *= g;
+        }
+    }
 }
 
 // ===========================================================================
