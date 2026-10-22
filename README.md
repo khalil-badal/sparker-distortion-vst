@@ -12,6 +12,10 @@ reference rather than being presets of a shared engine:
 
 Built by Khyle Audio.
 
+![Sparker Distortion](docs/ui.png)
+
+*Burner circuit, RED aggression. The UI themes itself to the active circuit.*
+
 ## Features
 
 - **Three circuits**, switchable live, each with its own control set, parameter
