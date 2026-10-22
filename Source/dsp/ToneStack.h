@@ -5,9 +5,10 @@
 // ToneStack — the Riot's tone control: a simple variable treble cut.
 //
 // From the Aion Fusion (traced Suhr Riot) schematic:
-//   TONE is a 10kC (reverse-log) pot with C8 (22 nF) to ground — a classic
-//   variable first-order low-pass. NOT a Big Muff LP/HP blend; the Riot
-//   never scoops mids.
+//   TONE is a 10kC (reverse-log) pot with C8 (22 nF) to ground — a single
+//   variable first-order low-pass. It only ever cuts treble; the midrange is
+//   untouched at every knob position, which is why the Riot stays thick and
+//   forward across the whole sweep.
 //
 //   Pot fully counter-clockwise (t=0): full 10 kΩ in circuit,
 //     fc = 1/(2π·10k·22n) ≈ 723 Hz  (dark)
@@ -15,7 +16,7 @@
 //     roll off against → effectively no treble cut (bright).
 //
 // DSP: one first-order LPF whose cutoff sweeps exponentially from 723 Hz
-// to ~12 kHz. The exponential sweep stands in for the C-taper pot, which
+// to ~16 kHz. The exponential sweep stands in for the C-taper pot, which
 // concentrates most of the audible change in the lower half of rotation.
 //
 // (The internal 20k PRESENCE trimmer that the Aion build adds is not part
@@ -28,7 +29,7 @@ public:
     void process (juce::AudioBuffer<float>& buffer);
     void reset();
 
-    // tone: 0.0 = dark (fc ≈ 723 Hz), 1.0 = bright (fc ≈ 12 kHz)
+    // tone: 0.0 = dark (fc ≈ 723 Hz), 1.0 = bright (fc ≈ 16 kHz)
     void setTone (float tone);
 
 private:

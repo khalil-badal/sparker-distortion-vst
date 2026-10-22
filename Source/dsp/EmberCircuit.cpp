@@ -58,4 +58,13 @@ void EmberCircuit::process (juce::AudioBuffer<float>& buffer,
     toneStack    .process (buffer);
     outputStage  .process (buffer);
     outputTrim   .process (buffer);
+
+    // Re-gate at the OUTPUT with the envelope the gate detected at the INPUT.
+    // Ember's preamp adds 40-80 dB, so any noise passing the input gate while
+    // it is open is amplified enormously; gating only at the input therefore
+    // leaves an audible amplified tail during the gate's release (and on any
+    // idle noise that briefly holds the gate open). Applying the same
+    // per-sample gate gain here silences that tail directly. During a note the
+    // gate is fully open (gain = 1), so this is a no-op on real playing.
+    noiseGate    .applyGateToOutput (buffer);
 }

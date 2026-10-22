@@ -2,20 +2,22 @@
 #include <JuceHeader.h>
 
 // ---------------------------------------------------------------------------
-// PedalLookAndFeel — Rootbound-vibe visual style for the Sparker Distortion.
+// PedalLookAndFeel — AI Studio UI redesign visual style for Sparker
+// Distortion. Reproduces the AI Studio mockup (see AI Studio/extracted/)
+// exactly: flat dark chassis, per-circuit radial-gradient background, SVG
+// -style ring-arc knobs. Embeds Inter (Regular/Medium/SemiBold/Bold) and
+// Barlow Condensed (ExtraBold/Regular/Light) from BinaryData.
 //
-// Embeds Inter (Regular/Medium/SemiBold/Bold) and Barlow Condensed
-// (ExtraBold/Regular/Light) from BinaryData.  Typefaces are registered on
-// construction and remain valid for the plugin's lifetime.
-//
-// Color palette: Sparker's original purple/black — nothing cyan.
+// Color palette: Ember = magenta (#d946ef), matching constants.ts
+// CIRCUIT_THEMES.EMBER. See gui/PluginColors.h for the full per-circuit
+// theme set (Burner blue/red, Blazer amber).
 // ---------------------------------------------------------------------------
 class PedalLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    // Sparker palette constants (purple/black — unchanged from original)
-    static constexpr uint32_t kPurple   = 0xFF6633AA;   // value arc / accent
-    static constexpr uint32_t kBg       = 0xFF0C0A11;   // flat background
+    // Ember palette (from AI Studio constants.ts CIRCUIT_THEMES.EMBER)
+    static constexpr uint32_t kPurple   = 0xFFD946EF;   // Ember primary accent
+    static constexpr uint32_t kBg       = 0xFF07050A;   // App.tsx root background
     static constexpr uint32_t kKnobBody = 0xFF0F0C1A;   // knob body dark
     static constexpr uint32_t kKnobRim  = 0xFF1A1228;   // knob outer rim
     static constexpr uint32_t kText     = 0xFFEEF1F8;   // near-white label
@@ -54,6 +56,16 @@ public:
     juce::Font barlowLight  (float height) const;                    // Barlow Condensed Light
 
 private:
+    // Build a Font from the embedded OpenDyslexic typeface at the given height.
+    // All UI text routes through here so the whole GUI renders in OpenDyslexic.
+    // Extra kerning is forced to 0 so it reads as a normal (if quirky) sans-
+    // serif rather than the wide accessibility spacing OpenDyslexic ships with.
+    juce::Font dyslexicFont (float height) const;
+
+    // OpenDyslexic — the typeface for all UI text. The Inter/Barlow faces below
+    // are kept loaded (BinaryData still embeds them) but every accessor now
+    // routes through dyslexicFont, so they are no longer the rendered face.
+    juce::Typeface::Ptr openDyslexic;
     juce::Typeface::Ptr interRegular, interMedium, interSemiBold, interBold;
     juce::Typeface::Ptr barlowExtraBold, barlowRegular, barlowLightFace;
 };

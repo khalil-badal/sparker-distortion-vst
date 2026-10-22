@@ -1,0 +1,6 @@
+{
+  "name": "Sparker Distortion VST UI",
+  "description": "Interactive virtual pedal and VST distortion plugin interface for Sparker Distortion featuring Ember, Burner, and Blazer circuit pages",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

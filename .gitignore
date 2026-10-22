@@ -1,2 +1,15 @@
 build/
 .claude/
+
+# Third-party manufacturer service manuals / schematics used as circuit
+# references during development. These are copyrighted by Suhr, REVV and
+# Friedman respectively and are NOT redistributable, so they stay local
+# even though they are what the DSP was modelled from.
+*.pdf
+
+# Download artifact — the extracted OpenDyslexic .otf under Assets/Fonts is
+# what the build actually uses.
+opendyslexic-*.zip
+
+# Duplicate of "AI Studio/extracted/" beside it.
+AI Studio/*.zip

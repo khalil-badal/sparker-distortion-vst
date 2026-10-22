@@ -6,29 +6,24 @@
 #include "gui/BurnerLookAndFeel.h"
 #include "gui/BlazerLookAndFeel.h"
 #include "gui/ModeSwitch.h"
-#include "gui/OsSwitch.h"
-#include "gui/CircuitSwitch.h"
 #include "gui/AggressionSwitch.h"
+#include "gui/VoicingSwitch.h"
+#include "gui/PluginHeader.h"
+#include "gui/LevelMeter.h"
 
 // ---------------------------------------------------------------------------
-// SuhrRiotEditor — "Khyle Audio Sparker" pedal GUI.
+// SuhrRiotEditor — Sparker Distortion GUI, reproducing the AI Studio mockup
+// (AI Studio/extracted/) exactly: flat modern chassis, per-circuit color
+// theme, header with preset stepper + circuit badge.
 //
-// Window: 590 × 430
+// Window: 800 x 600 (4:3, matches App.tsx's aspect-[4/3])
 //
-// Layout overview:
-//
-//  [Input Trim]  ┌──────────── pedal body ────────────┐  [Output Trim]
-//  (left outer)  │ DIST   Khyle Audio   LEVEL          │  (right outer)
-//                │  ()    [VOICE sw]     ()             │
-//                │           TONE                       │
-//                │            ()                        │
-//                │           ◉ LED  (painted dot)       │
-//                │         (footswitch toggle)          │
-//                │          SPARKER                     │
-//                │        DISTORTION                    │
-//                └──────────────────────────────────────┘
-//  [Tight]                                         [Mode panel]
-//  (lower-left)                                  (lower-right)
+// Layout per page (Ember/Burner/Blazer all share this grid):
+//   Header:      SPARKER v1.0 | preset LCD stepper | circuit badge
+//   Top row:     INPUT+meter | GAIN | KHYLE AUDIO | LEVEL/VOLUME | OUTPUT+meter
+//   Middle row:  Ember: single TONE knob. Burner/Blazer: 3 knobs.
+//   Bottom row:  GATE+TIGHT (left) | Footswitch+SPARKER wordmark (center)
+//                | mode-specific switch/knob (right)
 //
 // Bypass is wired to the footswitch (ToggleButton, styled as stomp-switch).
 // The LED dot is painted in paint() — it is NOT a component.
@@ -40,11 +35,44 @@ public:
     explicit SuhrRiotEditor (SuhrRiotProcessor&);
     ~SuhrRiotEditor() override;
 
-    void paint   (juce::Graphics&) override;
     void resized () override;
 
 private:
     void timerCallback() override;
+
+    // Places the AMP/DRIVE switch in the bottom right. Blazer sits it lower
+    // than Ember/Burner to clear the TRIM knob's caption — called from both
+    // resized() and timerCallback(), since the circuit can change without a
+    // resize. See the definition for the geometry.
+    void layOutVoicingSwitch();
+
+    // -----------------------------------------------------------------------
+    // UI scaling (Small / Medium / Large).
+    //
+    // The whole GUI is designed in a fixed 800x600 base coordinate space. All
+    // controls and all chassis painting live inside `root`, a single child
+    // component sized at that base 800x600. A size choice simply applies an
+    // AffineTransform scale to `root` (and sizes the editor to match), so the
+    // ENTIRE UI — every knob, switch, label and each component's own internal
+    // text — enlarges uniformly with one transform. Small (1.0x) is default.
+    // The chosen scale persists in the APVTS state tree (survives reload).
+    // -----------------------------------------------------------------------
+    void  paintChassis  (juce::Graphics&);            // draws the chassis in base coords
+    void  rootMouseDown (const juce::MouseEvent&);    // right-click -> size menu
+    void  applyUiScale  (float newScale, bool persist);
+    void  showSizeMenu();
+    float uiScale = 1.0f;
+
+    // Content root — parent of every control, painter of the chassis. Scaled
+    // as a whole to realise the UI size. Forwards paint/right-click back to
+    // the editor (nested class can access the editor's private members).
+    struct Root : juce::Component
+    {
+        SuhrRiotEditor& owner;
+        explicit Root (SuhrRiotEditor& o) : owner (o) {}
+        void paint (juce::Graphics& g) override             { owner.paintChassis (g); }
+        void mouseDown (const juce::MouseEvent& e) override { owner.rootMouseDown (e); }
+    };
 
     SuhrRiotProcessor& processorRef;
 
@@ -52,6 +80,9 @@ private:
     PedalLookAndFeel laf;
     BurnerLookAndFeel burnerLaf;   // violet accent, used only by Burner's own knobs
     BlazerLookAndFeel blazerLaf;   // gold accent, used only by Blazer's own knobs
+
+    // Declared before all controls so it outlives them (they are its children).
+    Root root { *this };
 
     // Inner pedal knobs
     juce::Slider driveKnob;      // DIST
@@ -71,9 +102,6 @@ private:
     // WARM/CLASSIC/HOT voicing selector. Untouched, unrelated to CircuitSwitch.
     ModeSwitch modeSwitch;
 
-    // Oversampling selector (lower-right, below MODE panel)
-    OsSwitch osSwitch;
-
     // Gate threshold knob (lower-left, below TIGHT knob)
     juce::Slider gateKnob;
 
@@ -82,19 +110,30 @@ private:
     juce::Label outputTrimDbLabel;
 
     // -----------------------------------------------------------------------
-    // Top-level circuit selector (Ember / Burner / Blazer) and Burner-only
-    // controls. Visibility of these vs. the Ember-only controls above is
+    // Top header bar — owns its own CircuitSwitch (Ember/Burner/Blazer badge)
+    // and preset stepper. Visibility of mode-specific controls below is
     // toggled in timerCallback() based on the "circuit" parameter — Ember's
     // own controls/behavior are never modified, only shown/hidden.
     // -----------------------------------------------------------------------
-    CircuitSwitch circuitSwitch;
+    PluginHeader header;
+
+    // Input/Output level meters (universal, next to the trim knobs)
+    LevelMeter inputMeter;
+    LevelMeter outputMeter;
 
     juce::Slider burnerGainKnob;
     juce::Slider burnerVolumeKnob;
     juce::Slider burnerBassKnob;
     juce::Slider burnerMidKnob;      // Burner-only — hidden in Ember mode
     juce::Slider burnerTrebleKnob;
+    juce::Slider burnerTightKnob;    // Burner-only — new, not schematic-accurate, see BurnerCircuit.h
     AggressionSwitch aggressionSwitch; // Burner-only — hidden in Ember mode
+
+    // Global AMP/DRIVE voicing. Universal (visible in every circuit), so it
+    // is NOT in any of the per-circuit visibility lists. Lives in the bottom
+    // right, above the mode/aggression panel — it was in the header next to
+    // the circuit badge, which made that corner read as cluttered.
+    VoicingSwitch voicingSwitch;
 
     // Blazer-only controls (Phase 8). No Mid, no Aggression, no voicing
     // switch — Blazer has zero switches on the real pedal (Phase 7
@@ -128,6 +167,7 @@ private:
     SliderAtt burnerBassAtt;
     SliderAtt burnerMidAtt;
     SliderAtt burnerTrebleAtt;
+    SliderAtt burnerTightAtt;
 
     SliderAtt blazerGainAtt;
     SliderAtt blazerVolumeAtt;

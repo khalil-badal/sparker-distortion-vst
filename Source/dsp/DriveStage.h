@@ -16,7 +16,8 @@
 //
 // STAGE 2 — IC1A, inverting, FIXED gain, band-limited:
 //   Gain = R4/R3 = 1M/10k = 100× (+40 dB), always on — this is why the Riot
-//   distorts even at minimum drive.
+//   distorts even at minimum drive. (See kStage2Gain below for its measured
+//   signal-to-noise cost and the one-constant alternative.)
 //   C4 (100 nF) in series with R3 → HPF at 1/(2π·10k·100n) ≈ 159 Hz
 //     (keeps deep bass from over-saturating the clipper).
 //   C5 (100 pF) across R4       → LPF at 1/(2π·1M·100p) ≈ 1.6 kHz
@@ -46,7 +47,26 @@ private:
     // Pre-allocated dry copy for the stage-1 unity-gain low-frequency path.
     juce::AudioBuffer<float> dryBuffer;
 
-    // Fixed stage-2 gain (R4/R3).
+    // -----------------------------------------------------------------------
+    // Fixed stage-2 gain (R4/R3 = 1M/10k = 100×, +40 dB) — the literal
+    // schematic value, kept.
+    //
+    // NOTE for future tuning: all of this gain is LINEAR and sits BEFORE the
+    // only nonlinearity, so it costs signal-to-noise — the SIGNAL is limited
+    // at the diode ceiling while the NOISE floor stays below the knee and
+    // receives the full gain. Measured (offline SNR test, 220 Hz @ −20 dBFS
+    // over a −70 dBFS noise floor, gate off): Ember's output SNR is 42.5 dB at
+    // 100×, and 49.7 dB at 10× — i.e. ~7 dB of SNR is the price of this stage,
+    // and lowering it would also restore some touch sensitivity (at 100× the
+    // clipper sits ~77× past its knee at default drive). 42.5 dB measures
+    // comparable to Burner (47.2 dB) and better than Blazer (31.2 dB), so the
+    // schematic value is kept — but 10× is a one-constant change if a cleaner,
+    // more dynamic voicing is ever wanted.
+    //
+    // (Ember's previously AUDIBLE noise was NOT this stage: it was a
+    // numerically ill-conditioned second-order ADAA in ClippingStage, since
+    // removed — see the ADAA comment there.)
+    // -----------------------------------------------------------------------
     static constexpr float kStage2Gain = 100.0f;
 
     // Smoothed stage-1 gain. Multiplicative smoothing interpolates

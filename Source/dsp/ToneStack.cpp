@@ -21,7 +21,7 @@ void ToneStack::prepare (double sr, int samplesPerBlock)
 // Coefficient update — called whenever the TONE knob moves.
 //
 // The cutoff sweeps exponentially between kFcMin (723 Hz, pot fully in
-// circuit) and kFcMax (12 kHz, pot dialed out). The exponential mapping
+// circuit) and kFcMax (16 kHz, pot dialed out). The exponential mapping
 // stands in for the reverse-log (C-taper) pot of the real pedal.
 // ===========================================================================
 

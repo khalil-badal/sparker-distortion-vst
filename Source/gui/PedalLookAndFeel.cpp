@@ -1,4 +1,5 @@
 #include "PedalLookAndFeel.h"
+#include "FlatKnobPainter.h"
 #include <BinaryData.h>
 
 static juce::Typeface::Ptr makeTypeface (const void* data, int size)
@@ -24,6 +25,13 @@ PedalLookAndFeel::PedalLookAndFeel()
     barlowLightFace = makeTypeface (BinaryData::BarlowCondensedLight_ttf,
                                    BinaryData::BarlowCondensedLight_ttfSize);
 
+    // OpenDyslexic — the typeface for all UI text. Loaded once, cached, kept
+    // alive for the plugin's lifetime. jassert catches a bad/missing resource in
+    // debug builds (createSystemTypefaceFor returns null on failure).
+    openDyslexic    = makeTypeface (BinaryData::OpenDyslexicRegular_otf,
+                                   BinaryData::OpenDyslexicRegular_otfSize);
+    jassert (openDyslexic != nullptr);
+
     setColour (juce::Slider::textBoxTextColourId,       juce::Colour (kText));
     setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (kBg));
     setColour (juce::Slider::textBoxOutlineColourId,    juce::Colour (0xff2a1840));
@@ -33,29 +41,30 @@ PedalLookAndFeel::PedalLookAndFeel()
 }
 
 // ---------------------------------------------------------- plugin background --
+// Matches App.tsx's Ember radial gradient exactly:
+//   radial-gradient(ellipse at center, #260c33 0%, #170620 60%, #0c0212 100%)
 void PedalLookAndFeel::drawPluginBackground (juce::Graphics& g, int width, int height)
 {
-    // Flat dark base
-    g.fillAll (juce::Colour (kBg));
-
-    // Radial purple bloom from the center — subtle, not dramatic
+    // Radius approximates CSS radial-gradient's default "farthest-corner"
+    // sizing (distance from center to the box corner) so the gradient
+    // actually reaches near-black by the edges instead of staying visibly
+    // tinted all the way out — was spread too far (0.75x) before.
     const float cx     = (float) width  * 0.5f;
-    const float cy     = (float) height * 0.48f;
-    const float radius = (float) juce::jmax (width, height) * 0.65f;
+    const float cy     = (float) height * 0.5f;
+    const float radius = std::sqrt (juce::square ((float) width * 0.5f) + juce::square ((float) height * 0.5f));
 
-    juce::ColourGradient bloom (
-        juce::Colour (kPurple).withAlpha (0.055f), cx, cy,
-        juce::Colour (kBg).withAlpha     (0.0f),   cx, cy + radius,
+    juce::ColourGradient grad (
+        juce::Colour (0xff260c33), cx, cy,
+        juce::Colour (0xff0c0212), cx, cy + radius,
         true);
-    g.setGradientFill (bloom);
+    grad.addColour (0.6, juce::Colour (0xff170620));
+    g.setGradientFill (grad);
     g.fillRect (0, 0, width, height);
 }
 
 // -------------------------------------------------------------- rotary knob --
-//
-// Adapted from RootboundLookAndFeel::drawRotarySlider — same depth/polish,
-// cyan references replaced with Sparker's purple, knob body kept in the
-// original dark-purple register.
+// Delegates to the shared flat-knob painter (see FlatKnobPainter.h) with
+// Ember's magenta accent — matches AI Studio's Knob.tsx exactly.
 void PedalLookAndFeel::drawRotarySlider (juce::Graphics& g,
                                           int x, int y, int width, int height,
                                           float sliderPos,
@@ -63,82 +72,8 @@ void PedalLookAndFeel::drawRotarySlider (juce::Graphics& g,
                                           float rotaryEndAngle,
                                           juce::Slider&)
 {
-    const float cx  = (float) x + (float) width  * 0.5f;
-    const float cy  = (float) y + (float) height * 0.5f;
-    const float r   = juce::jmin ((float) width, (float) height) * 0.42f;
-    const float arc = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
-
-    // Shadow / depth ring
-    g.setColour (juce::Colours::black.withAlpha (0.6f));
-    g.fillEllipse (cx - r - 3.0f, cy - r - 3.0f, (r + 3.0f) * 2.0f, (r + 3.0f) * 2.0f);
-
-    // Outer rim (dark purple)
-    g.setColour (juce::Colour (kKnobRim));
-    g.fillEllipse (cx - r - 1.5f, cy - r - 1.5f, (r + 1.5f) * 2.0f, (r + 1.5f) * 2.0f);
-
-    // Knob body — dark purple metallic gradient, lit from top-left
-    {
-        juce::ColourGradient grad (
-            juce::Colour (0xFF1e1828), cx - r * 0.3f, cy - r * 0.3f,
-            juce::Colour (kKnobBody),  cx + r * 0.5f, cy + r * 0.5f,
-            false);
-        g.setGradientFill (grad);
-        g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
-    }
-
-    // Subtle highlight arc (top-left shine)
-    {
-        juce::Path shine;
-        shine.addArc (cx - r * 0.85f, cy - r * 0.85f, r * 1.7f, r * 1.7f,
-                      rotaryStartAngle - 0.5f, rotaryStartAngle + 1.8f, true);
-        g.setColour (juce::Colours::white.withAlpha (0.06f));
-        g.strokePath (shine, juce::PathStrokeType (r * 0.18f));
-    }
-
-    // Track arc (unfilled, very dark)
-    {
-        juce::Path track;
-        track.addArc (cx - r * 0.88f, cy - r * 0.88f,
-                      r * 1.76f, r * 1.76f,
-                      rotaryStartAngle, rotaryEndAngle, true);
-        g.setColour (juce::Colour (0xFF0A0810));
-        g.strokePath (track, juce::PathStrokeType (r * 0.10f,
-                      juce::PathStrokeType::curved,
-                      juce::PathStrokeType::rounded));
-    }
-
-    // Filled arc — purple, double-pass (glow then core)
-    if (sliderPos > 0.001f)
-    {
-        juce::Path fill;
-        fill.addArc (cx - r * 0.88f, cy - r * 0.88f,
-                     r * 1.76f, r * 1.76f,
-                     rotaryStartAngle, arc, true);
-
-        g.setColour (juce::Colour (kPurple).withAlpha (0.22f));
-        g.strokePath (fill, juce::PathStrokeType (r * 0.18f,
-                      juce::PathStrokeType::curved,
-                      juce::PathStrokeType::rounded));
-
-        g.setColour (juce::Colour (kPurple).withAlpha (0.9f));
-        g.strokePath (fill, juce::PathStrokeType (r * 0.09f,
-                      juce::PathStrokeType::curved,
-                      juce::PathStrokeType::rounded));
-    }
-
-    // Indicator line + dot
-    {
-        const float ix = cx + std::sin (arc) * r * 0.60f;
-        const float iy = cy - std::cos (arc) * r * 0.60f;
-        g.setColour (juce::Colours::white.withAlpha (0.7f));
-        g.drawLine (cx, cy, ix, iy, 1.2f);
-        g.setColour (juce::Colours::white);
-        g.fillEllipse (ix - 2.5f, iy - 2.5f, 5.0f, 5.0f);
-    }
-
-    // Inner shadow
-    g.setColour (juce::Colours::black.withAlpha (0.25f));
-    g.fillEllipse (cx - r * 0.45f, cy - r * 0.45f, r * 0.9f, r * 0.9f);
+    drawFlatRotaryKnob (g, x, y, width, height, sliderPos, rotaryStartAngle, rotaryEndAngle,
+                        juce::Colour (kPurple));
 }
 
 // ------------------------------------------------------------------ toggle --
@@ -150,35 +85,42 @@ void PedalLookAndFeel::drawToggleButton (juce::Graphics& g,
 
     if (id == "footswitch")
     {
+        // Matches AI Studio's Footswitch.tsx exactly: dark radial dome,
+        // outer ring border tinted by the active circuit's TEXT color (not
+        // primary — this was the wrong stashed color before) when engaged.
+        // PluginEditor stashes the current theme.text ARGB in the button's
+        // properties (no direct access to circuit state from here).
+        const bool engaged = button.getToggleState();
+        const bool pressed = button.isDown();
+        const juce::Colour circuitTextColour (
+            static_cast<juce::uint32> ((int) button.getProperties().getWithDefault ("circuitColorArgb", (int) 0xff64748b)));
+
         const float w      = (float) button.getWidth();
         const float h      = (float) button.getHeight();
         const float cx     = w * 0.5f;
         const float cy     = h * 0.5f;
         const float outerR = juce::jmin (w, h) * 0.5f - 1.0f;
 
-        // Rubber outer ring
-        g.setColour (juce::Colour (0xff0e0c16));
+        // Outer border ring
+        g.setColour (juce::Colour (0xff0a0714));
         g.fillEllipse (cx - outerR, cy - outerR, outerR * 2.0f, outerR * 2.0f);
-        g.setColour (juce::Colour (0xff1a1230));
+        g.setColour (engaged ? circuitTextColour.withAlpha (0.47f) : juce::Colour (0xff221936));
         g.drawEllipse (cx - outerR, cy - outerR, outerR * 2.0f, outerR * 2.0f, 1.5f);
 
-        // Chrome cap — dark metal gradient
-        const float capR = outerR * 0.76f;
-        juce::ColourGradient cap (
-            juce::Colour (0xff2a2240), cx - capR * 0.25f, cy - capR * 0.3f,
-            juce::Colour (0xff0c0a14), cx + capR * 0.25f, cy + capR * 0.3f,
-            true);
-        g.setGradientFill (cap);
-        g.fillEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f);
-
-        // Concentric detail ring
-        const float detR = capR * 0.72f;
-        g.setColour (juce::Colour (0x28201840));
-        g.drawEllipse (cx - detR, cy - detR, detR * 2.0f, detR * 2.0f, 0.8f);
-
-        // Cap outline
-        g.setColour (juce::Colour (0xff221a38));
-        g.drawEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f, 1.0f);
+        // Inner dome — fills inside the ring with an exact 4px padding
+        // (was a proportional 10% shrink before, which drifted from the
+        // spec at different sizes).
+        const float domeR = outerR - 4.0f;
+        juce::ColourGradient dome = pressed
+            ? juce::ColourGradient (juce::Colour (0xff231b36), cx - domeR * 0.10f, cy - domeR * 0.10f,
+                                    juce::Colour (0xff09060f), cx + domeR * 0.5f,  cy + domeR * 0.5f, true)
+            : juce::ColourGradient (juce::Colour (0xff433561), cx - domeR * 0.24f, cy - domeR * 0.36f,
+                                    juce::Colour (0xff0e0a17), cx + domeR * 0.5f,  cy + domeR * 0.5f, true);
+        dome.addColour (pressed ? 0.7 : 0.55, pressed ? juce::Colour (0xff130e1e) : juce::Colour (0xff211933));
+        g.setGradientFill (dome);
+        g.fillEllipse (cx - domeR, cy - domeR, domeR * 2.0f, domeR * 2.0f);
+        g.setColour (engaged ? circuitTextColour.withAlpha (0.67f) : juce::Colour (0xff312648));
+        g.drawEllipse (cx - domeR, cy - domeR, domeR * 2.0f, domeR * 2.0f, 1.0f);
 
         if (highlighted)
         {
@@ -186,42 +128,6 @@ void PedalLookAndFeel::drawToggleButton (juce::Graphics& g,
             g.fillEllipse (cx - outerR, cy - outerR, outerR * 2.0f, outerR * 2.0f);
         }
 
-        return;
-    }
-
-    if (id == "gate")
-    {
-        const float w   = (float) button.getWidth();
-        const float h   = (float) button.getHeight();
-        const float pad = 2.0f;
-        const float bx  = pad;
-        const float by  = pad;
-        const float bw  = w - 2.0f * pad;
-        const float bh  = h - 2.0f * pad;
-        const bool  on  = button.getToggleState();
-
-        g.setColour (juce::Colour (0xff0e0c18));
-        g.fillRoundedRectangle (bx, by, bw, bh, 3.0f);
-
-        g.setColour (on ? juce::Colour (0xff7733bb) : juce::Colour (0xff2a1a44));
-        g.drawRoundedRectangle (bx, by, bw, bh, 3.0f, 1.2f);
-
-        if (on)
-        {
-            g.setColour (juce::Colour (0x186633aa));
-            g.fillRoundedRectangle (bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 2.5f);
-        }
-
-        if (highlighted)
-        {
-            g.setColour (juce::Colour (0x18ffffff));
-            g.fillRoundedRectangle (bx, by, bw, bh, 3.0f);
-        }
-
-        g.setFont (juce::Font (juce::FontOptions().withTypeface (interSemiBold).withHeight (9.0f)));
-        g.setColour (on ? juce::Colour (0xffccaaff) : juce::Colour (0xff443355));
-        g.drawText (on ? "ON" : "OFF", 0, (int) by, (int) w, (int) bh,
-                    juce::Justification::centred, false);
         return;
     }
 
@@ -281,49 +187,56 @@ void PedalLookAndFeel::drawButtonText (juce::Graphics& g,
                       juce::Justification::centred, 2);
 }
 
+// ---------------------------------------------------------------- OpenDyslexic --
+// Central builder: every UI font routes through here. Extra kerning forced to 0
+// so OpenDyslexic renders with normal typographic spacing (a quirky sans-serif),
+// not the wide accessibility spacing it ships with by default. Falls back to a
+// plain sized font if the typeface somehow failed to load.
+juce::Font PedalLookAndFeel::dyslexicFont (float height) const
+{
+    juce::Font f = (openDyslexic != nullptr)
+                     ? juce::Font (juce::FontOptions().withTypeface (openDyslexic).withHeight (height))
+                     : juce::Font (juce::FontOptions().withHeight (height));
+    f.setExtraKerningFactor (0.0f);   // normal letter spacing, not the wide default
+    return f;
+}
+
 // --------------------------------------------------------------- font overrides --
+// All accessors now render in OpenDyslexic (the weight/bold flags are ignored —
+// only the Regular weight is embedded per spec). Heights are unchanged so
+// layout, sizing and the overall UI scale are untouched.
 juce::Font PedalLookAndFeel::getLabelFont (juce::Label&)
 {
-    return juce::Font (juce::FontOptions().withTypeface (interMedium).withHeight (10.0f));
+    return dyslexicFont (10.0f);
 }
 
 juce::Font PedalLookAndFeel::getTextButtonFont (juce::TextButton&, int)
 {
-    return juce::Font (juce::FontOptions().withTypeface (interSemiBold).withHeight (11.0f));
+    return dyslexicFont (11.0f);
 }
 
 // --------------------------------------------------------- direct accessors --
 juce::Font PedalLookAndFeel::regularFont (float height) const
 {
-    if (interRegular)
-        return juce::Font (juce::FontOptions().withTypeface (interRegular).withHeight (height));
-    return juce::Font (juce::FontOptions().withHeight (height));
+    return dyslexicFont (height);
 }
 
-juce::Font PedalLookAndFeel::uiFont (float height, bool bold) const
+juce::Font PedalLookAndFeel::uiFont (float height, bool /*bold*/) const
 {
-    auto tf = bold ? interBold : interMedium;
-    if (tf) return juce::Font (juce::FontOptions().withTypeface (tf).withHeight (height));
-    return juce::Font (juce::FontOptions().withHeight (height));
+    return dyslexicFont (height);
 }
 
 juce::Font PedalLookAndFeel::semiBoldFont (float height) const
 {
-    if (interSemiBold)
-        return juce::Font (juce::FontOptions().withTypeface (interSemiBold).withHeight (height));
-    return juce::Font (juce::FontOptions().withHeight (height));
+    return dyslexicFont (height);
 }
 
 juce::Font PedalLookAndFeel::brandFont (float height) const
 {
-    if (barlowExtraBold)
-        return juce::Font (juce::FontOptions().withTypeface (barlowExtraBold).withHeight (height));
-    return juce::Font (juce::FontOptions().withHeight (height));
+    return dyslexicFont (height);
 }
 
 juce::Font PedalLookAndFeel::barlowLight (float height) const
 {
-    if (barlowLightFace)
-        return juce::Font (juce::FontOptions().withTypeface (barlowLightFace).withHeight (height));
-    return juce::Font (juce::FontOptions().withHeight (height));
+    return dyslexicFont (height);
 }

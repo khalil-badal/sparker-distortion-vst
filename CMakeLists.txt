@@ -45,6 +45,7 @@ juce_add_binary_data(SparkerFonts
         Assets/Fonts/BarlowCondensed-ExtraBold.ttf
         Assets/Fonts/BarlowCondensed-Regular.ttf
         Assets/Fonts/BarlowCondensed-Light.ttf
+        Assets/Fonts/OpenDyslexic-Regular.otf
 )
 
 # ---------------------------------------------------------------------------
@@ -61,7 +62,6 @@ target_sources(SuhrRiot
         Source/dsp/OutputStage.cpp
         Source/gui/PedalLookAndFeel.cpp
         Source/gui/ModeSwitch.cpp
-        Source/gui/OsSwitch.cpp
         Source/dsp/TrimStage.cpp
         Source/dsp/TightFilter.cpp
         Source/dsp/NoiseGate.cpp
@@ -72,6 +72,8 @@ target_sources(SuhrRiot
         Source/gui/AggressionSwitch.cpp
         Source/gui/BurnerLookAndFeel.cpp
         Source/gui/BlazerLookAndFeel.cpp
+        Source/gui/PluginHeader.cpp
+        Source/gui/VoicingSwitch.cpp
 )
 
 # ---------------------------------------------------------------------------

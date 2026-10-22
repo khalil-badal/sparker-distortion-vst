@@ -77,7 +77,7 @@ void DriveStage::process (juce::AudioBuffer<float>& buffer)
         }
     }
 
-    // ---- Stage 2: fixed 100× gain, band-limited 159 Hz – 1.6 kHz -----------
+    // ---- Stage 2: fixed gain (kStage2Gain), band-limited 159 Hz – 1.6 kHz ---
     {
         juce::dsp::AudioBlock<float>              block (buffer);
         juce::dsp::ProcessContextReplacing<float> ctx (block);

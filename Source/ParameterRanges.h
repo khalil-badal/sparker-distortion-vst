@@ -43,6 +43,23 @@ struct ParamRange
     float skew         = 1.0f;   // 1.0 = linear, <1.0 = audio/log-leaning taper
 };
 
+// JUCE's rotary knob renders at the RAW normalized slider proportion
+// (convertTo0to1(value)), not the "real" value directly. JUCE's actual
+// NormalisableRange::convertFrom0to1 (non-symmetric-skew path) computes
+// value = min + (max-min) * pow(proportion, 1/skew) — note the 1/skew,
+// not skew directly. So proportion=0.5 (12 o'clock) happens at
+// value = min + (max-min) * pow(0.5, 1/skew), NOT pow(0.5, skew).
+//
+// CORRECTION: an earlier version of this function used pow(0.5, skew)
+// (exponent inverted), which put every skewed knob's default at the WRONG
+// raw proportion — e.g. Volume (skew 0.35) landed at proportion ~0.86
+// (~4 o'clock) instead of 0.5 (12 o'clock). Verified by direct calculation
+// against JUCE's source before this fix, not just re-guessed.
+inline float midpointDefault (float min, float max, float skew) noexcept
+{
+    return min + (max - min) * std::pow (0.5f, 1.0f / skew);
+}
+
 inline std::map<juce::String, ParamRange> getParameterRanges (CircuitMode mode)
 {
     std::map<juce::String, ParamRange> ranges;
@@ -58,26 +75,50 @@ inline std::map<juce::String, ParamRange> getParameterRanges (CircuitMode mode)
             break;
 
         case CircuitMode::BURNER:
-            ranges["burnerGain"]   = { 0.0f, 1.0f, 0.5f, 1.0f  }; // B1M, linear
-            ranges["burnerVolume"] = { 0.0f, 1.0f, 0.5f, 0.35f }; // A50k, audio taper
-            ranges["burnerBass"]   = { 0.0f, 1.0f, 0.5f, 0.35f }; // A100K, audio taper
-            ranges["burnerTreble"] = { 0.0f, 1.0f, 0.5f, 0.35f }; // A50k, audio taper
-            ranges["burnerMid"]    = { 0.0f, 1.0f, 0.5f, 1.0f  }; // B100k, linear (active mid)
+        {
+            // All controls linear: the NR clipper's own gain math (rf/rin) and
+            // the EQ shelves' dB formula already supply the perceptual curve.
+            // Previous audio-taper (skew 0.35) on Volume/Bass/Treble put the
+            // 12 o'clock default at 0.138, which was too quiet (Volume) and
+            // cut ~9 dB (Bass/Treble — the EQ formula treats 0.5 as flat).
+            ranges["burnerGain"]   = { 0.0f, 1.0f, 0.5f, 1.0f }; // B1M, linear
+            ranges["burnerVolume"] = { 0.0f, 1.0f, 0.5f, 1.0f }; // A50k — linear for sensible default
+            ranges["burnerBass"]   = { 0.0f, 1.0f, 0.5f, 1.0f }; // A100K — 0.5 = flat EQ
+            ranges["burnerTreble"] = { 0.0f, 1.0f, 0.5f, 1.0f }; // A50k — 0.5 = flat EQ
+            ranges["burnerMid"]    = { 0.0f, 1.0f, 0.5f, 1.0f }; // B100k, linear (active mid)
+            ranges["burnerTight"]  = { 0.0f, 1.0f, 0.0f, 1.0f }; // fully open default
             break;
+        }
 
         case CircuitMode::BLAZER:
-            // C-taper (reverse-audio) controls use skew = 1/0.35 ≈ 2.857 —
-            // the JUCE-convention mirror of the 0.35 audio-taper skew used
-            // elsewhere (skew>1 biases resolution toward the top of the
-            // range, matching a reverse-audio pot's feel).
-            ranges["blazerGain"]     = { 0.0f, 1.0f, 0.5f, 1.0f   }; // B1M, linear
-            ranges["blazerVolume"]   = { 0.0f, 1.0f, 0.5f, 0.35f  }; // A50K, audio taper
-            ranges["blazerBass"]     = { 0.0f, 1.0f, 0.5f, 2.857f }; // C100K, reverse audio
-            ranges["blazerTreble"]   = { 0.0f, 1.0f, 0.5f, 1.0f   }; // B100K, linear
-            ranges["blazerPresence"] = { 0.0f, 1.0f, 0.5f, 2.857f }; // C10K, reverse audio
-            ranges["blazerTight"]    = { 0.0f, 1.0f, 0.0f, 2.857f }; // C100K, reverse audio; default fully open
-            ranges["blazerTrim"]     = { 0.0f, 1.0f, 0.5f, 1.0f   }; // 100K trimpot, linear, default midpoint
+        {
+            // Linear on Volume (same fix as Burner — audio taper put 12 o'clock
+            // at 0.138, far too quiet). Bass/Presence/Tight keep reverse taper
+            // (C-taper pots on the real pedal).
+            const float reverseTaperSkew = 2.857f;
+            const float reverseDefault   = midpointDefault (0.0f, 1.0f, reverseTaperSkew);
+
+            ranges["blazerGain"]     = { 0.0f, 1.0f, 0.5f,           1.0f            }; // B1M, linear
+            ranges["blazerVolume"]   = { 0.0f, 1.0f, 0.5f,           1.0f            }; // A50K — linear for sensible default
+            // Bass: LINEAR with a flat (0.5) default so 12 o'clock = 0 dB, like
+            // Burner's bass. Previously a reverse C-taper whose 0.784 default
+            // put visual-noon at +6.8 dB @100 Hz — a hidden bass boost that
+            // made Blazer read as "too fat". The real Friedman BE-OD is a
+            // TIGHT, punchy modded-Marshall voice, not a woofy one, so it
+            // should sit neutral at noon and let the player add low end.
+            ranges["blazerBass"]     = { 0.0f, 1.0f, 0.5f,           1.0f            }; // noon = flat (was reverse C-taper, +6.8 dB)
+            ranges["blazerTreble"]   = { 0.0f, 1.0f, 0.5f,           1.0f            }; // B100K, linear
+            // Presence: LINEAR with a flat (0.5) default so 12 o'clock = 0 dB.
+            // Same latent bug the Bass control had: the reverse C-taper put the
+            // visual-noon VALUE at 0.784, i.e. a hidden +6.8 dB at 5 kHz. Pink-
+            // noise measurement showed Blazer sitting +11 to +13 dB at 8 kHz
+            // relative to 1 kHz — far too bright/fizzy, and bright glare also
+            // masks definition, compounding the "muddy" impression.
+            ranges["blazerPresence"] = { 0.0f, 1.0f, 0.5f,           1.0f            }; // noon = flat (was reverse C-taper, +6.8 dB)
+            ranges["blazerTight"]    = { 0.0f, 1.0f, reverseDefault, reverseTaperSkew }; // C100K, reverse audio
+            ranges["blazerTrim"]     = { 0.0f, 1.0f, 0.5f,           1.0f            }; // 100K trimpot, linear
             break;
+        }
     }
 
     return ranges;

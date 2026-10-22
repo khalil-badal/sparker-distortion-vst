@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include <limits>
 
 // ============================================================================
 // FROZEN — Phase 11 final sign-off. Sparker Distortion v2.0 is
@@ -7,9 +8,27 @@
 // EmberCircuit.h), and Burner (REVV G3, see BurnerCircuit.h) are ALL frozen
 // as of this point. No further modifications to this file, its .cpp,
 // Ember, or Burner are permitted without a new, explicitly-scoped phase
-// sequence. This file's own Newton-Raphson clipper clamp (+-4V, see
-// BlazerCircuit.cpp) was tightened during Phase 10 testing — see that
-// file's comment for the exp()-overflow rationale — before this freeze.
+// sequence.
+//
+// EXCEPTION ON RECORD (Phase 10): the Newton-Raphson clipper's vout clamp
+// was tightened to +-4V to prevent exp() overflow.
+//
+// EXCEPTION ON RECORD (post-v2.0, explicit new instruction): added fixed
+// 8x oversampling around the Newton-Raphson clipper loop only, same
+// pattern as BurnerCircuit/Ember's ClippingStage. Solver math untouched.
+// Oversampling is no longer user-selectable anywhere in the plugin.
+//
+// EXCEPTION ON RECORD (post-Phase-11 LEVEL-FIDELITY REVISION, explicitly
+// authorised): the VOLUME gain mapping was corrected to match the hardware.
+// VOLUMEN is a BOM-confirmed A50K (AUDIO taper) pot, but the model applied it
+// LINEARLY and capped total output at unity — a real BE-OD is a notoriously
+// loud pedal with makeup to spare. Now: audio taper (volumeNorm^2) times a
+// fixed output makeup gain (new `makeupGain` member, mirroring Burner's IC2
+// stage). The noon value is deliberately unchanged (0.5^2 * 2.0 = 0.5,
+// matching the old linear map at 0.5), so this corrects taper and headroom
+// without moving the calibrated default. Clipping character, the NR solver,
+// oversampling, the tone stack and the Tight control are all untouched.
+// Blazer is re-frozen as of this revision.
 // ============================================================================
 //
 // ---------------------------------------------------------------------------
@@ -74,6 +93,17 @@ private:
     float tightNorm    = 0.0f;   // 0 = fully open (no HPF action), matches Ember's Tight convention
     float trimNorm     = 0.5f;   // internal parameter, defaults to midpoint
 
+    // Cached last-applied control values — the tone-stack and Tight IIR
+    // coefficients are rebuilt only when their knob moves. The juce::dsp
+    // makeXxx factories heap-allocate a Coefficients object, so rebuilding
+    // every block was real-time-unsafe audio-thread allocation; guarding
+    // makes the steady state allocation-free. NaN sentinel (reset in
+    // prepare()) forces a rebuild on the first block / after a rate change.
+    float lastTightNorm    = std::numeric_limits<float>::quiet_NaN();
+    float lastBassNorm     = std::numeric_limits<float>::quiet_NaN();
+    float lastTrebleNorm   = std::numeric_limits<float>::quiet_NaN();
+    float lastPresenceNorm = std::numeric_limits<float>::quiet_NaN();
+
     using IIRDup = juce::dsp::ProcessorDuplicator<
         juce::dsp::IIR::Filter<float>,
         juce::dsp::IIR::Coefficients<float>>;
@@ -89,4 +119,31 @@ private:
 
     static constexpr int kMaxChannels = 2;
     float clipperPrevVout[kMaxChannels] = { 0.0f, 0.0f };
+
+    // Fixed output makeup gain, applied together with the VOLUMEN pot (see
+    // BlazerCircuit.cpp). ENGINEERING ESTIMATE — the op-amp stage roles beyond
+    // input buffer -> gain+clip were not wire-traced (see the estimate list
+    // above), so the exact makeup ratio is not confirmed. 2.0 (+6 dB) matches
+    // the equivalent stage in BurnerCircuit and gives the pedal real output on
+    // tap instead of capping it at unity. Added in the post-Phase-11
+    // level-fidelity revision.
+    float makeupGain = 2.0f;
+
+    // Fixed 8× oversampling around the NR clipper loop (post-v2.0 exception).
+    // IIR half-band filter kept over FIR equiripple: −70 dB stopband is
+    // sufficient at 8× (aliases land >90 dB below signal), and IIR has
+    // lower latency. See BurnerCircuit.h for the full evaluation.
+    using OvS = juce::dsp::Oversampling<float>;
+    // 32x (was 8x). The NR diode is a HARD clipper and, unlike Burner, Blazer
+    // drives it FAR past its knee, so it approaches an ideal square whose
+    // harmonics fall off at only 6 dB/oct — a great deal of energy sits above
+    // the oversampled Nyquist and folds back. Measured, this was the single
+    // biggest aliasing source in the plugin: -13.9 dB of non-harmonic energy
+    // at 48 kHz (vs -54 dB for Ember, which ADAAs its saturators). There is no
+    // closed-form antiderivative for this implicit solve to ADAA with, so
+    // oversampling is the available lever: 16x gave -28.8 dB and 32x gives
+    // -46.8 dB, with the sample-rate dependence collapsing to ~4 dB (i.e.
+    // essentially clean). Costly in exp() calls, but this is the one place in
+    // the plugin that genuinely needs it.
+    OvS os8x { 2, 5, OvS::filterHalfBandPolyphaseIIR };
 };

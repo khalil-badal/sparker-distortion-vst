@@ -14,10 +14,9 @@ ModeSwitch::~ModeSwitch()
 }
 
 // ===========================================================================
-// ModeSwitch::paint  (114 × 72 component)
-//
-// Each button background uses the padded rect; the text label spans the
-// full segment width so "CLASSIC" is never clipped.
+// ModeSwitch::paint — matches AI Studio's EmberPage.tsx MODE selector
+// exactly: bg #130f1e, border #2b223e @60%, active cell = accent text +
+// primary-tinted bg/border + glow, inactive = slate-500 text, transparent.
 // ===========================================================================
 void ModeSwitch::paint (juce::Graphics& g)
 {
@@ -26,11 +25,19 @@ void ModeSwitch::paint (juce::Graphics& g)
     const float segW = w / (float) kNumModes;
 
     const float pad      = 3.0f;
-    const float btnH     = h * 0.74f;
-    const float modeRowH = h - btnH;
+    const float btnH     = h; // "MODE" label removed — button row now fills the full component
 
-    const auto fMed  = laf.uiFont       (9.0f);
-    const auto fSemi = laf.semiBoldFont (10.0f);
+    const juce::Colour primary (0xffd946ef);
+    const juce::Colour accent  (0xfff0abfc);
+    const juce::Colour glow    = primary.withAlpha (0.35f);
+
+    const auto fMed  = laf.uiFont (10.0f, true); // bumped 9->10 for OpenDyslexic legibility
+
+    // Panel background
+    g.setColour (juce::Colour (0xff130f1e));
+    g.fillRoundedRectangle (0.0f, 0.0f, w, btnH, 8.0f);
+    g.setColour (juce::Colour (0xff2b223e).withAlpha (0.6f));
+    g.drawRoundedRectangle (0.5f, 0.5f, w - 1.0f, btnH - 1.0f, 8.0f, 1.0f);
 
     for (int i = 0; i < kNumModes; ++i)
     {
@@ -40,37 +47,22 @@ void ModeSwitch::paint (juce::Graphics& g)
         const float bh  = btnH - 2.0f * pad;
         const bool  sel = (i == currentMode);
 
-        // Button background
-        g.setColour (juce::Colour (0xff0e0c18));
-        g.fillRoundedRectangle (bx, by, bw, bh, 4.0f);
-
         if (sel)
         {
-            g.setColour (juce::Colour (0xff7733bb));
-            g.drawRoundedRectangle (bx, by, bw, bh, 4.0f, 1.4f);
-            g.setColour (juce::Colour (0x186633aa));
-            g.fillRoundedRectangle (bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 3.5f);
-        }
-        else
-        {
-            g.setColour (juce::Colour (0xff1a1428));
-            g.drawRoundedRectangle (bx, by, bw, bh, 4.0f, 0.8f);
+            g.setColour (glow);
+            g.fillRoundedRectangle (bx - 1.5f, by - 1.5f, bw + 3.0f, bh + 3.0f, 6.5f);
+            g.setColour (primary.withAlpha (0.2f));
+            g.fillRoundedRectangle (bx, by, bw, bh, 5.0f);
+            g.setColour (primary);
+            g.drawRoundedRectangle (bx, by, bw, bh, 5.0f, 1.5f);
         }
 
-        // Label spans full cell width so "CLASSIC" never gets clipped
         g.setFont (fMed);
-        g.setColour (sel ? juce::Colour (0xffccaaff) : juce::Colour (0xff443355));
+        g.setColour (sel ? accent : juce::Colour (0xff64748b));
         g.drawText (kLabels[i],
                     (int) (i * segW), (int) by, (int) segW, (int) bh,
                     juce::Justification::centred, false);
     }
-
-    // "MODE" below the button row
-    g.setFont (fSemi);
-    g.setColour (juce::Colour (0xff7755aa));
-    g.drawText ("MODE",
-                0, (int) btnH, (int) w, (int) modeRowH,
-                juce::Justification::centred, false);
 }
 
 void ModeSwitch::mouseDown (const juce::MouseEvent& e)

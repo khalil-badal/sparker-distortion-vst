@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include <limits>
 
 // ============================================================================
 // FROZEN — Phase 11 final sign-off. Sparker Distortion v2.0 is
@@ -8,14 +9,38 @@
 // point. No further modifications to this file, its .cpp, Ember, or Blazer
 // are permitted without a new, explicitly-scoped phase sequence.
 //
-// EXCEPTION ON RECORD: during Phase 10 integration testing, this file's
-// Newton-Raphson diode clipper (see BurnerCircuit.cpp) received one narrow,
-// signed-off fix — the vout clamp was tightened from +-20V to +-4V to
-// prevent exp() overflow (the previous bound allowed exp(vout/kNVt)
-// arguments up to ~441, past float's ~88.7 overflow ceiling, producing
-// inf-inf = NaN that permanently corrupted the clipper's state). This does
-// not change the audible clipping character. No other change was made; the
-// file is re-frozen as of that fix.
+// EXCEPTION ON RECORD (Phase 10): the Newton-Raphson diode clipper's vout
+// clamp was tightened from +-20V to +-4V to prevent exp() overflow.
+//
+// EXCEPTION ON RECORD (post-v2.0, explicit new instruction): added fixed
+// 8x oversampling around the Newton-Raphson clipper loop only (matching
+// Ember's ClippingStage pattern exactly — linear filters stay at base
+// rate). The NR solver math itself was NOT touched, only wrapped in an
+// upsample/downsample pair. Oversampling is no longer user-selectable
+// anywhere in the plugin (was Ember-only before; now implicit and fixed
+// at 8x for all three circuits).
+//
+// EXCEPTION ON RECORD (post-Phase-11 LEVEL-FIDELITY REVISION, explicitly
+// authorised): the VOLUME gain mapping was corrected to match the hardware.
+// VOLUME is a BOM-confirmed A50k (AUDIO taper) pot, but the model applied it
+// LINEARLY and capped total output at unity. Now: audio taper (volumeNorm^2)
+// multiplied by IC2's fixed makeup gain, which restores the pedal's real
+// ability to drive an amp past unity. The `makeupGain` member existed but was
+// never referenced (a dead stub) and is now wired into the gain calculation.
+// The noon value is deliberately unchanged (0.5^2 * 2.0 = 0.5, matching the
+// old linear map at 0.5), so this corrects taper and headroom without moving
+// the calibrated default. Clipping character, the NR solver, oversampling,
+// the tone stack and the aggression circuitry are all untouched.
+// Burner is re-frozen as of this revision.
+//
+// EXCEPTION ON RECORD (post-v2.0, explicit new instruction): added a Tight
+// control (continuous pre-clip HPF). IMPORTANT — the real REVV G3 has NO
+// Tight knob; the confirmed Phase 2 BOM lists exactly six controls (Gain,
+// Volume, Bass, Treble, Mid, Aggression), no Tight pot anywhere. This is a
+// new, non-schematic-accurate feature added purely at explicit request, not
+// a circuit-derived control like everything else in this file. Modelled
+// after Blazer's own Tight implementation (which IS schematic-accurate for
+// that pedal) purely for a consistent feel across modes.
 // ============================================================================
 //
 // ---------------------------------------------------------------------------
@@ -74,6 +99,9 @@ public:
     void setMid         (float norm) noexcept { midNorm    = juce::jlimit (0.0f, 1.0f, norm); }
     void setTreble       (float norm) noexcept { trebleNorm = juce::jlimit (0.0f, 1.0f, norm); }
     void setAggression  (int state)  noexcept { aggression = juce::jlimit (0, 1, state); }
+    // Not schematic-accurate — see class-level comment. 0 = fully open
+    // (no HPF action), matching Blazer/Ember's Tight convention.
+    void setTight        (float norm) noexcept { tightNorm  = juce::jlimit (0.0f, 1.0f, norm); }
 
 private:
     double sampleRate = 44100.0;
@@ -85,6 +113,19 @@ private:
     float trebleNorm  = 0.5f;
     int   aggression  = 0;
     int   lastAggression = -1;   // forces coefficient recompute on first block
+    float tightNorm   = 0.0f;
+
+    // Cached last-applied control values — the tone-stack and Tight IIR
+    // coefficients are only rebuilt when the corresponding knob actually
+    // moves. Rebuilding every block called juce::dsp's makeXxx factories,
+    // each of which heap-allocates a Coefficients object — real-time-unsafe
+    // audio-thread allocation. Guarding behind change-detection makes the
+    // steady state (knobs still) allocation-free. NaN sentinel forces the
+    // first block to compute. (aggression already had this guard.)
+    float lastTightNorm  = std::numeric_limits<float>::quiet_NaN();
+    float lastBassNorm   = std::numeric_limits<float>::quiet_NaN();
+    float lastTrebleNorm = std::numeric_limits<float>::quiet_NaN();
+    float lastMidNorm    = std::numeric_limits<float>::quiet_NaN();
 
     // Input DC-block / coupling HPF (R2=470k, C1=22n -> ~15.4 Hz).
     using IIRDup = juce::dsp::ProcessorDuplicator<
@@ -92,6 +133,10 @@ private:
         juce::dsp::IIR::Coefficients<float>>;
 
     IIRDup inputHpf;
+
+    // Tight: continuous pre-clip HPF, NOT schematic-accurate (see
+    // class-level comment). 20-400 Hz range, matching Blazer's own range.
+    IIRDup tightHpf;
 
     // Aggression corner filters: two states per the corrected aggression
     // switch — see class-level comment. Applied BOTH pre-clip (as a
@@ -121,5 +166,31 @@ private:
     static constexpr int kMaxChannels = 2;
     float clipperPrevVout[kMaxChannels] = { 0.0f, 0.0f };
 
-    float makeupGain = 1.0f;
+    // IC2's fixed output makeup gain, applied together with the VOLUME pot
+    // (see BurnerCircuit.cpp). ENGINEERING ESTIMATE — IC2's exact role and
+    // gain were not wire-confirmed (see the estimate list above); 2.0 (+6 dB)
+    // is a standard makeup-buffer value and gives the pedal genuine output
+    // on tap rather than capping it at unity.
+    //
+    // This member previously existed but was never referenced — a dead stub.
+    // It is wired into the real gain calculation as of the post-Phase-11
+    // level-fidelity revision.
+    float makeupGain = 2.0f;
+
+    // Fixed 8× oversampling around the NR clipper loop (post-v2.0 exception).
+    // filterHalfBandPolyphaseIIR was evaluated against filterHalfBandFIREquiripple:
+    // the IIR variant achieves ~−70 dB stopband attenuation; FIR equiripple
+    // reaches ~−90 dB but adds significant latency (group delay from the
+    // linear-phase FIR). At 8× OS the folding harmonics are already at
+    // very high multiples of the fundamental, so −70 dB IIR puts aliases
+    // well below the noise floor — the extra 20 dB from FIR is inaudible.
+    // IIR is kept for its lower latency.
+    using OvS = juce::dsp::Oversampling<float>;
+    // 8x. Measured NOT to be a meaningful aliasing source for Burner: its
+    // diode is fed a deliberately tiny signal (kBurnerDiodeFeed) so it sits
+    // near its soft knee rather than hard-clipping. Raising it to 16x or 32x
+    // changed Burner aliasing by <1 dB (and 16x measured marginally worse),
+    // so the extra NR/exp() cost buys nothing here. Burner anti-aliasing is
+    // handled where it matters — ADAA on the cascade (see BurnerCascade.h).
+    OvS os8x { 2, 3, OvS::filterHalfBandPolyphaseIIR };
 };

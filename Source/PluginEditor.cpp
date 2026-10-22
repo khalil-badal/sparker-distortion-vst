@@ -1,103 +1,54 @@
 #include "PluginEditor.h"
+#include "gui/PluginColors.h"
 #include <cmath>
 
 // ============================================================================
-// Layout constants
+// Layout constants — reproduces AI Studio's grid layout (see
+// AI Studio/extracted/src/components/*.tsx) at fixed pixel positions.
+// Window is 4:3 (App.tsx: aspect-[4/3] min-h-[580px]).
 // ============================================================================
-static constexpr int   kW       = 590;
-static constexpr int   kH       = 430;
+static constexpr int   kW = 800;
+static constexpr int   kH = 600;
 
-// Pedal body dimensions (used for control positioning; no visual border drawn)
-static constexpr float kPedalX  = 106.0f;
-static constexpr float kPedalY  =  12.0f;
-static constexpr float kPedalW  = 378.0f;
-static constexpr float kPedalCX = kPedalX + kPedalW * 0.5f;          // 295
+// UI size presets — the base 800x600 design scaled up. Small is the default.
+static constexpr float kScaleSmall  = 1.0f;
+static constexpr float kScaleMedium = 1.25f;
+static constexpr float kScaleLarge  = 1.5f;
+// Property key under which the chosen scale lives in the APVTS state tree
+// (persisted with the project via get/setStateInformation).
+static const juce::Identifier kUiScaleProp { "uiScale" };
 
-// Top-row inner knobs (DRIVE / LEVEL)
-static constexpr float kTopKnobD = 72.0f;
-static constexpr float kTopKnobY = kPedalY + 42.0f;                   // 54
-static constexpr float kDistX    = kPedalX + 26.0f;                   // 132
-static constexpr float kLevelX   = kPedalX + kPedalW - 26.0f - kTopKnobD;  // 356
+static constexpr int   kHeaderH = 52;
 
-// TONE knob (center middle)
-static constexpr float kToneD    = 66.0f;
-static constexpr float kToneX    = kPedalCX - kToneD * 0.5f;         // 262
-static constexpr float kToneY    = kPedalY + 152.0f;                  // 164
+static constexpr float kPadX = 24.0f;
+static constexpr float kContentW = (float) kW - 2.0f * kPadX;
 
-// LED dot (painted non-interactive indicator, above footswitch)
-static constexpr float kLedCX    = kPedalCX;                          // 295
-static constexpr float kLedCY    = kPedalY + 270.0f;                  // 282
+// Top row: INPUT+meter | GAIN | KHYLE AUDIO | LEVEL/VOLUME | OUTPUT+meter
+static constexpr float kKnobLargeD = 84.0f;
+static constexpr float kTopRowY    = (float) kHeaderH + 32.0f;
+static constexpr float kColW       = kContentW / 5.0f;
+static float colX (int i) { return kPadX + (float) i * kColW; }
+static constexpr float kMeterW = 10.0f;
 
-// Footswitch (ToggleButton, styled as chrome stomp-switch)
-static constexpr float kFootD    = 64.0f;
-static constexpr float kFootX    = kPedalCX - kFootD * 0.5f;         // 263
-static constexpr float kFootY    = kLedCY + 10.0f;                    // 292
+// Middle row: Ember = 1 knob centered. Burner/Blazer = 3 knobs, gap 48px.
+static constexpr float kMidRowY = kTopRowY + kKnobLargeD + 36.0f;
+static constexpr float kMidGap  = 48.0f;
 
-// Outer trim knobs (vertically aligned with the inner top row)
-static constexpr float kTrimD    = 68.0f;
-static constexpr float kTrimLX   = 12.0f;
-static constexpr float kTrimRX   = (float) kW - 12.0f - kTrimD;     // 510
-static constexpr float kTrimY    = kTopKnobY - 4.0f;                  // 50
-
-// Tight knob (lower-left, outside pedal)
-static constexpr float kTightD   = 52.0f;
-static constexpr float kTightX   = 16.0f;
-static constexpr float kTightY   = 272.0f;
-
-// Oversampling selector — single cycling button below the Mode panel.
-// "OS:" label (24 px) + one button (30 px) aligned to the MODE panel left edge.
-static constexpr int   kOsLabelX = 462;   // flush with MODE panel left edge
-static constexpr int   kOsX      = 486;   // button starts after "OS:" label
-static constexpr int   kOsY      = 352;   // 24 px below MODE panel bottom
-static constexpr int   kOsW      = 30;    // single cycling button
-static constexpr int   kOsH      = 18;
-
-// Gate threshold knob — lower-left, below the TIGHT knob + its label.
-// Same size as the TIGHT knob so the two outer-left controls match visually.
-static constexpr float kGateKnobD = 40.0f;
-static constexpr float kGateKnobX = 16.0f;
-static constexpr float kGateKnobY = 346.0f;
-
-// Mode panel (lower-right, outside pedal) — component bounds
-static constexpr int   kModePX   = 462;
-static constexpr int   kModePY   = 256;
-static constexpr int   kModePW   = 114;
-static constexpr int   kModePH   = 72;
-
-// Circuit selector (Ember/Burner/Blazer) — above the MODE panel.
-static constexpr int   kCircuitPX = 462;
-static constexpr int   kCircuitPY = 168;
-static constexpr int   kCircuitPW = 114;
-static constexpr int   kCircuitPH = 60;
-
-// Burner-only controls. Gain/Volume reuse the DRIVE/LEVEL knob slots
-// (never shown at the same time as Ember's own knobs).
-static constexpr float kBurnerRowY  = kToneY;      // Bass/Mid/Treble row
-static constexpr float kBurnerKnobD = 58.0f;
-static constexpr float kBurnerBassX    = kPedalX + 51.0f;                         // 157
-static constexpr float kBurnerMidX     = kPedalCX - kBurnerKnobD * 0.5f;          // 266
-static constexpr float kBurnerTrebleX  = kPedalX + kPedalW - 51.0f - kBurnerKnobD; // 375
-
-// Aggression toggle — reuses the TIGHT knob's outer-left slot.
-static constexpr int kAggressionX = 16;
-static constexpr int kAggressionY = 268;
-static constexpr int kAggressionW = 80;
-static constexpr int kAggressionH = 52;
-
-// Blazer-only controls. Gain/Volume reuse the DRIVE/LEVEL knob slots (same
-// as Burner). Bass/Treble/Presence share Burner's 3-knob row slots exactly
-// (Bass/Mid/Treble x-positions), since only one mode's knobs are ever
-// visible at once. Tight reuses Ember's own TIGHT knob slot — same control
-// concept, same position. Trim is a small "advanced" knob reusing the GATE
-// knob's outer-left slot, sized down to read as secondary.
-static constexpr float kBlazerTrimD = 30.0f;   // smaller than a main knob
-static constexpr float kBlazerTrimX = kGateKnobX + (kGateKnobD - kBlazerTrimD) * 0.5f;
-static constexpr float kBlazerTrimY = kGateKnobY + (kGateKnobD - kBlazerTrimD) * 0.5f;
+// Bottom row — all three groups (GATE/TIGHT, footswitch, MODE/AGGRESSION)
+// share a common BOTTOM edge close to the chassis floor (the wordmark sits
+// further below, in the remaining margin). This intentionally makes the
+// mid-row -> bottom-row gap the largest gap in the layout.
+static constexpr float kKnobSmallD  = 56.0f;
+static constexpr float kSmallGap    = 56.0f;
+static constexpr float kFootD       = 72.0f;
+static constexpr float kLedD        = 16.0f; // spec: exactly 16x16px
+static constexpr float kLedGap      = 12.0f; // spec: 12px gap (mb-3) between LED and footswitch
+static constexpr float kBottomRowBottomY = (float) kH - 100.0f;
+static constexpr float kBottomRowY       = kBottomRowBottomY - kKnobSmallD;
+static constexpr float kModePanelH       = kKnobSmallD; // vertically aligned with GATE/TIGHT knobs
 
 // ============================================================================
-// Letter-spaced text helper
-// Draws each character individually with extra spacing between them,
-// centred horizontally inside `bounds`.
+// Letter-spaced text helper (kept from the original implementation)
 // ============================================================================
 static void drawLetterSpaced (juce::Graphics& g,
                                const juce::String& text,
@@ -128,13 +79,50 @@ static void drawLetterSpaced (juce::Graphics& g,
     }
 }
 
+// Draws a knob's label + numeric readout below it, matching Knob.tsx.
+static void drawKnobCaption (juce::Graphics& g, PedalLookAndFeel& laf,
+                              float knobX, float knobY, float knobD,
+                              const juce::String& label, const juce::String& readout,
+                              juce::Colour readoutColour)
+{
+    // Sizes bumped for legibility: OpenDyslexic renders smaller/thinner than
+    // the Inter it replaced at the same pixel height, so the caption label and
+    // (especially) the tiny numeric readout were hard to read. The draw boxes
+    // are widened/tallened to match so nothing clips.
+    const float capY = knobY + knobD + 6.0f;
+    g.setFont (laf.uiFont (15.0f, true));
+    g.setColour (juce::Colour (PluginColors::kLabelText));
+    g.drawText (label, (int) (knobX - 26.0f), (int) capY, (int) (knobD + 52.0f), 18,
+                juce::Justification::centred);
+
+    if (readout.isNotEmpty())
+    {
+        g.setFont (laf.regularFont (13.0f));
+        g.setColour (readoutColour);
+        g.drawText (readout, (int) (knobX - 26.0f), (int) (capY + 18.0f), (int) (knobD + 52.0f), 16,
+                    juce::Justification::centred);
+    }
+}
+
+// AI Studio's mockup displays every non-dB knob's value on an abstract
+// 0-10 scale (see constants.ts DEFAULT_PLUGIN_STATE — drive:6.5, level:7.0,
+// etc.), regardless of the parameter's real engineering units underneath.
+// This reproduces that exact display convention: raw slider proportion
+// (0..1) x10, one decimal — cosmetic only, doesn't change the real range.
+static juce::String knobReadout01to10 (juce::Slider& s)
+{
+    const double proportion = s.valueToProportionOfLength (s.getValue());
+    return juce::String (proportion * 10.0, 1);
+}
+
 // ============================================================================
 // Constructor
 // ============================================================================
 SuhrRiotEditor::SuhrRiotEditor (SuhrRiotProcessor& p)
     : AudioProcessorEditor (&p),
       processorRef (p),
-      modeSwitch   (p.apvts, laf),
+      header          (p.apvts, laf),
+      modeSwitch      (p.apvts, laf),
       driveAtt        (p.apvts, "drive",      driveKnob),
       toneAtt         (p.apvts, "tone",        toneKnob),
       levelAtt        (p.apvts, "level",       levelKnob),
@@ -142,15 +130,15 @@ SuhrRiotEditor::SuhrRiotEditor (SuhrRiotProcessor& p)
       outputTrimAtt   (p.apvts, "outputTrim",  outputTrimKnob),
       tightAtt        (p.apvts, "tightFreq",   tightKnob),
       footswitchAtt   (p.apvts, "active",      footswitch),
-      osSwitch        (p.apvts, laf),
       gateAtt         (p.apvts, "gateThresh",  gateKnob),
-      circuitSwitch   (p.apvts, laf),
       aggressionSwitch (p.apvts, laf),
+      voicingSwitch    (p.apvts, laf),
       burnerGainAtt    (p.apvts, "burnerGain",   burnerGainKnob),
       burnerVolumeAtt  (p.apvts, "burnerVolume", burnerVolumeKnob),
       burnerBassAtt    (p.apvts, "burnerBass",   burnerBassKnob),
       burnerMidAtt     (p.apvts, "burnerMid",    burnerMidKnob),
       burnerTrebleAtt  (p.apvts, "burnerTreble", burnerTrebleKnob),
+      burnerTightAtt   (p.apvts, "burnerTight",  burnerTightKnob),
       blazerGainAtt     (p.apvts, "blazerGain",     blazerGainKnob),
       blazerVolumeAtt   (p.apvts, "blazerVolume",   blazerVolumeKnob),
       blazerBassAtt     (p.apvts, "blazerBass",     blazerBassKnob),
@@ -159,52 +147,41 @@ SuhrRiotEditor::SuhrRiotEditor (SuhrRiotProcessor& p)
       blazerTightAtt    (p.apvts, "blazerTight",    blazerTightKnob),
       blazerTrimAtt     (p.apvts, "blazerTrim",     blazerTrimKnob)
 {
-    // Rotary knobs
+    // The root fills the editor and is the parent of every control; it also
+    // paints the chassis. Everything is added to `root` (not the editor) so a
+    // single transform on `root` scales the whole UI uniformly.
+    addAndMakeVisible (root);
+
+    // Ember rotary knobs
     for (auto* s : { &driveKnob, &toneKnob, &levelKnob,
                      &inputTrimKnob, &outputTrimKnob, &tightKnob, &gateKnob })
     {
         s->setLookAndFeel (&laf);
         s->setSliderStyle (juce::Slider::RotaryVerticalDrag);
         s->setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        addAndMakeVisible (*s);
+        root.addAndMakeVisible (*s);
     }
 
-    // Footswitch — chrome stomp button
     footswitch.setComponentID ("footswitch");
     footswitch.setLookAndFeel (&laf);
     footswitch.setClickingTogglesState (true);
-    addAndMakeVisible (footswitch);
+    root.addAndMakeVisible (footswitch);
 
-    // dB readout labels — Inter Regular 9.5pt, near-white at 70% alpha
-    const auto dbFont = laf.regularFont (9.5f);
-    for (auto* lbl : { &inputTrimDbLabel, &outputTrimDbLabel })
-    {
-        lbl->setFont (dbFont);
-        lbl->setColour (juce::Label::textColourId,
-                        juce::Colour (PedalLookAndFeel::kText).withAlpha (0.7f));
-        lbl->setJustificationType (juce::Justification::centred);
-        addAndMakeVisible (*lbl);
-    }
-    inputTrimDbLabel .setText ("0.0 dB", juce::dontSendNotification);
-    outputTrimDbLabel.setText ("0.0 dB", juce::dontSendNotification);
+    root.addAndMakeVisible (modeSwitch);
+    root.addAndMakeVisible (aggressionSwitch);
+    root.addAndMakeVisible (voicingSwitch);
+    root.addAndMakeVisible (inputMeter);
+    root.addAndMakeVisible (outputMeter);
 
-    addAndMakeVisible (modeSwitch);
-    addAndMakeVisible (osSwitch);
-
-    // Burner-only rotary knobs — use BurnerLookAndFeel (violet accent).
     for (auto* s : { &burnerGainKnob, &burnerVolumeKnob, &burnerBassKnob,
-                     &burnerMidKnob, &burnerTrebleKnob })
+                     &burnerMidKnob, &burnerTrebleKnob, &burnerTightKnob })
     {
         s->setLookAndFeel (&burnerLaf);
         s->setSliderStyle (juce::Slider::RotaryVerticalDrag);
         s->setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        addAndMakeVisible (*s);
+        root.addAndMakeVisible (*s);
     }
 
-    addAndMakeVisible (circuitSwitch);
-    addAndMakeVisible (aggressionSwitch);
-
-    // Blazer-only rotary knobs — use BlazerLookAndFeel (gold accent).
     for (auto* s : { &blazerGainKnob, &blazerVolumeKnob, &blazerBassKnob,
                      &blazerTrebleKnob, &blazerPresenceKnob, &blazerTightKnob,
                      &blazerTrimKnob })
@@ -212,11 +189,37 @@ SuhrRiotEditor::SuhrRiotEditor (SuhrRiotProcessor& p)
         s->setLookAndFeel (&blazerLaf);
         s->setSliderStyle (juce::Slider::RotaryVerticalDrag);
         s->setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        addAndMakeVisible (*s);
+        root.addAndMakeVisible (*s);
     }
 
+    header.onSelectPreset = [this] (const PluginHeader::Entry& entry)
+    {
+        if (entry.isUserFile)
+        {
+            // Full state replace — real user-saved presets capture every
+            // parameter, not just a hand-picked subset.
+            PresetManager::loadPreset (processorRef.apvts, entry.file);
+            return;
+        }
+
+        // Factory preset: switch circuit first if needed, then apply the
+        // hand-picked param subset (PresetData.h).
+        jassert (entry.factory != nullptr);
+        if (auto* circuitParam = processorRef.apvts.getParameter ("circuit"))
+            circuitParam->setValueNotifyingHost (circuitParam->convertTo0to1 ((float) entry.factory->circuit));
+
+        for (auto& v : entry.factory->values)
+            if (auto* param = processorRef.apvts.getParameter (v.paramId))
+                param->setValueNotifyingHost (param->convertTo0to1 (v.value));
+    };
+    root.addAndMakeVisible (header);
+
     startTimerHz (15);
-    setSize (kW, kH);
+
+    // Restore the persisted UI size (defaults to Small on first open). This
+    // calls setSize internally, so no separate setSize is needed here.
+    const float savedScale = (float) processorRef.apvts.state.getProperty (kUiScaleProp, (double) kScaleSmall);
+    applyUiScale (savedScale, /*persist*/ false);
 }
 
 SuhrRiotEditor::~SuhrRiotEditor()
@@ -228,7 +231,7 @@ SuhrRiotEditor::~SuhrRiotEditor()
     footswitch.setLookAndFeel (nullptr);
 
     for (auto* s : { &burnerGainKnob, &burnerVolumeKnob, &burnerBassKnob,
-                     &burnerMidKnob, &burnerTrebleKnob })
+                     &burnerMidKnob, &burnerTrebleKnob, &burnerTightKnob })
         s->setLookAndFeel (nullptr);
 
     for (auto* s : { &blazerGainKnob, &blazerVolumeKnob, &blazerBassKnob,
@@ -238,26 +241,32 @@ SuhrRiotEditor::~SuhrRiotEditor()
 }
 
 // ============================================================================
-// Timer — 15 Hz: updates dB readouts and repaints LED
+// Timer — 15 Hz: updates meters/visibility and repaints
 // ============================================================================
 void SuhrRiotEditor::timerCallback()
 {
-    auto fmtDb = [](float db) -> juce::String
-    {
-        return juce::String (db, 1) + " dB";
-    };
-
-    const float inTrim  = processorRef.apvts.getRawParameterValue ("inputTrim") ->load();
-    const float outTrim = processorRef.apvts.getRawParameterValue ("outputTrim")->load();
-
-    inputTrimDbLabel .setText (fmtDb (inTrim),  juce::dontSendNotification);
-    outputTrimDbLabel.setText (fmtDb (outTrim), juce::dontSendNotification);
-
-    // -------------------------------------------------------------------
-    // Circuit-mode visibility routing. Ember's own components are never
-    // modified — only shown/hidden depending on which circuit is active.
-    // -------------------------------------------------------------------
     const int circuit = static_cast<int> (processorRef.apvts.getRawParameterValue ("circuit")->load());
+    const int aggression = static_cast<int> (processorRef.apvts.getRawParameterValue ("burnerAggression")->load());
+    const auto theme = PluginColors::themeFor (circuit, aggression);
+
+    // The voicing switch sits lower in Blazer (see layOutVoicingSwitch), and
+    // the circuit can change without a resize, so re-place it here. setBounds
+    // is a no-op when the bounds are unchanged, which is the common case.
+    layOutVoicingSwitch();
+
+    // Real signal peak, not a cosmetic function of the trim knob — dark at
+    // rest, white with signal, red when clipping. Same for all circuits,
+    // no theme tint (see LevelMeter.h).
+    inputMeter .setLevel (processorRef.inputPeakLevel.load  (std::memory_order_relaxed));
+    outputMeter.setLevel (processorRef.outputPeakLevel.load (std::memory_order_relaxed));
+
+    burnerLaf.setAccent (theme.primary);
+
+    // Stash the current accent as an ARGB int on the footswitch so
+    // PedalLookAndFeel::drawToggleButton can read it without needing
+    // direct access to circuit state.
+    footswitch.getProperties().set ("circuitColorArgb", (int) theme.text.getARGB());
+
     if (circuit != lastEditorCircuit)
     {
         lastEditorCircuit = circuit;
@@ -265,30 +274,33 @@ void SuhrRiotEditor::timerCallback()
         const bool burnerActive = (circuit == 1);
         const bool blazerActive = (circuit == 2);
 
-        // Ember-only controls
+        // Input/Output Trim and Gate are universal (shown in every mode),
+        // so their LookAndFeel must switch with the circuit too — they were
+        // stuck on the base (Ember/magenta) laf regardless of mode.
+        auto* universalLaf = emberActive ? static_cast<PedalLookAndFeel*> (&laf)
+                            : burnerActive ? static_cast<PedalLookAndFeel*> (&burnerLaf)
+                                           : static_cast<PedalLookAndFeel*> (&blazerLaf);
+        for (auto* s : { &inputTrimKnob, &outputTrimKnob, &gateKnob })
+            s->setLookAndFeel (universalLaf);
+
         for (auto* c : { (juce::Component*) &driveKnob, (juce::Component*) &toneKnob,
                          (juce::Component*) &levelKnob, (juce::Component*) &tightKnob,
-                         (juce::Component*) &gateKnob,  (juce::Component*) &modeSwitch,
-                         (juce::Component*) &osSwitch,  (juce::Component*) &inputTrimKnob,
-                         (juce::Component*) &outputTrimKnob,
-                         (juce::Component*) &inputTrimDbLabel,
-                         (juce::Component*) &outputTrimDbLabel })
+                         (juce::Component*) &modeSwitch })
             c->setVisible (emberActive);
 
-        // Burner-only controls
         for (auto* c : { (juce::Component*) &burnerGainKnob, (juce::Component*) &burnerVolumeKnob,
                          (juce::Component*) &burnerBassKnob, (juce::Component*) &burnerMidKnob,
-                         (juce::Component*) &burnerTrebleKnob, (juce::Component*) &aggressionSwitch })
+                         (juce::Component*) &burnerTrebleKnob, (juce::Component*) &burnerTightKnob,
+                         (juce::Component*) &aggressionSwitch })
             c->setVisible (burnerActive);
 
-        // Blazer-only controls
         for (auto* c : { (juce::Component*) &blazerGainKnob, (juce::Component*) &blazerVolumeKnob,
                          (juce::Component*) &blazerBassKnob, (juce::Component*) &blazerTrebleKnob,
                          (juce::Component*) &blazerPresenceKnob, (juce::Component*) &blazerTightKnob,
                          (juce::Component*) &blazerTrimKnob })
             c->setVisible (blazerActive);
 
-        // Footswitch (bypass) and CircuitSwitch itself stay visible always.
+        // Universal: Input/Output Trim, their meters, GATE, footswitch, header.
     }
 
     repaint();
@@ -297,304 +309,329 @@ void SuhrRiotEditor::timerCallback()
 // ============================================================================
 // Paint
 // ============================================================================
-void SuhrRiotEditor::paint (juce::Graphics& g)
+void SuhrRiotEditor::paintChassis (juce::Graphics& g)
 {
-    // -----------------------------------------------------------------------
-    // 1. Background — flat dark + purple radial bloom (no patterns, no art)
-    // -----------------------------------------------------------------------
-    laf.drawPluginBackground (g, getWidth(), getHeight());
-
-    const int circuit      = static_cast<int> (processorRef.apvts.getRawParameterValue ("circuit")->load());
+    // Drawn in the fixed 800x600 base coordinate space onto `root`, which
+    // carries the UI-size transform — so this scales with everything else.
+    const int circuit     = static_cast<int> (processorRef.apvts.getRawParameterValue ("circuit")->load());
+    const int aggression  = static_cast<int> (processorRef.apvts.getRawParameterValue ("burnerAggression")->load());
     const bool emberActive  = (circuit == 0);
     const bool burnerActive = (circuit == 1);
     const bool blazerActive = (circuit == 2);
+    const auto theme = PluginColors::themeFor (circuit, aggression);
 
-    // Burner/Blazer colorway: subtle accent-tinted bloom overlay on top of
-    // the shared black background (does not touch drawPluginBackground
-    // itself, which stays Ember's original purple bloom).
-    if (burnerActive || blazerActive)
+    // -----------------------------------------------------------------------
+    // 1. Background — per-circuit radial gradient, matches App.tsx exactly.
+    // -----------------------------------------------------------------------
+    if (emberActive)
     {
-        const uint32_t accent = burnerActive ? BurnerLookAndFeel::kAccent : BlazerLookAndFeel::kAccent;
-        const float cx = (float) getWidth() * 0.5f;
-        const float cy = (float) getHeight() * 0.48f;
-        const float radius = (float) juce::jmax (getWidth(), getHeight()) * 0.65f;
-        juce::ColourGradient bloom (
-            juce::Colour (accent).withAlpha (0.05f), cx, cy,
-            juce::Colour (accent).withAlpha (0.0f), cx, cy + radius,
-            true);
-        g.setGradientFill (bloom);
-        g.fillRect (0, 0, getWidth(), getHeight());
+        laf.drawPluginBackground (g, kW, kH);
+    }
+    else
+    {
+        // Burner is "at 50% 35%" (offset toward top); Blazer is "at
+        // center" — these were incorrectly sharing the same 35% offset.
+        // Radius approximates CSS's "farthest-corner" default sizing (was
+        // spread too far at 0.85x, reading as flat color instead of
+        // fading to near-black at the edges).
+        const float cx = (float) kW * 0.5f;
+        const float cy = burnerActive ? (float) kH * 0.35f : (float) kH * 0.5f;
+        const float radius = std::sqrt (juce::square ((float) kW * 0.5f) + juce::square ((float) kH * 0.5f));
+
+        juce::Colour c0, c1, c2, c3;
+        if (burnerActive)
+        {
+            if (aggression == 1) { c0 = juce::Colour (0xff440c26); c1 = juce::Colour (0xff290833); c2 = juce::Colour (0xff150522); c3 = juce::Colour (0xff080212); }
+            else                 { c0 = juce::Colour (0xff0d2c4e); c1 = juce::Colour (0xff1f0b38); c2 = juce::Colour (0xff130522); c3 = juce::Colour (0xff080212); }
+        }
+        else // Blazer
+        {
+            c0 = juce::Colour (0xff20160b); c1 = juce::Colour (0xff20160b); c2 = juce::Colour (0xff140d06); c3 = juce::Colour (0xff0a0603);
+        }
+
+        juce::ColourGradient grad (c0, cx, cy, c3, cx, cy + radius, true);
+        grad.addColour (0.45, c1);
+        grad.addColour (0.75, c2);
+        g.setGradientFill (grad);
+        g.fillRect (0, 0, kW, kH);
     }
 
-    // -----------------------------------------------------------------------
-    // 2. Parameter labels — Inter Medium 10pt, near-white
-    // -----------------------------------------------------------------------
-    const auto lblFont = laf.uiFont (10.0f);
-    const juce::Colour lblCol (PedalLookAndFeel::kText);
+    // Chassis border with a soft outer glow bloom (mockup: box-shadow glow
+    // around the whole panel) — approximated with several expanding,
+    // fading strokes since JUCE has no native CSS-style blur.
+    for (int i = 5; i >= 1; --i)
+    {
+        const float t = (float) i / 5.0f;
+        g.setColour (theme.primary.withAlpha (0.05f * t));
+        g.drawRoundedRectangle (1.0f - (float) i * 1.2f, 1.0f - (float) i * 1.2f,
+                                (float) kW - 2.0f + (float) i * 2.4f,
+                                (float) kH - 2.0f + (float) i * 2.4f,
+                                14.0f + (float) i, 2.0f);
+    }
+    g.setColour (theme.border);
+    g.drawRoundedRectangle (1.0f, 1.0f, (float) kW - 2.0f, (float) kH - 2.0f, 14.0f, 1.5f);
 
-    g.setFont (lblFont);
-    g.setColour (lblCol);
+    const auto lblFont = laf.uiFont (12.0f, true);
+    const juce::Colour lblCol (PluginColors::kLabelText);
+
+    // -----------------------------------------------------------------------
+    // 2. Top row captions + KHYLE AUDIO logo
+    // -----------------------------------------------------------------------
+    const float inputKnobX  = colX (0) + 18.0f;
+    const float gainKnobX   = colX (1) + (kColW - kKnobLargeD) * 0.5f;
+    const float levelKnobX  = colX (3) + (kColW - kKnobLargeD) * 0.5f;
+    const float outputKnobX = colX (4) + kColW - kKnobLargeD - 18.0f;
+
+    auto fmtDb = [] (float db) { return (db > 0.0f ? "+" : "") + juce::String (db, 1) + " dB"; };
+    const float inTrim  = processorRef.apvts.getRawParameterValue ("inputTrim") ->load();
+    const float outTrim = processorRef.apvts.getRawParameterValue ("outputTrim")->load();
+
+    drawKnobCaption (g, laf, inputKnobX,  kTopRowY, kKnobLargeD, "INPUT",  fmtDb (inTrim),  juce::Colours::white);
+    drawKnobCaption (g, laf, outputKnobX, kTopRowY, kKnobLargeD, "OUTPUT", fmtDb (outTrim), juce::Colours::white);
+
+    g.setFont (laf.uiFont (14.0f, true));
+    g.setColour (juce::Colour (0xffcbd5e1).withAlpha (0.8f));
+    drawLetterSpaced (g, "KHYLE AUDIO",
+                      { colX (2), kTopRowY + kKnobLargeD * 0.4f, kColW, 16.0f }, 1.5f);
 
     if (emberActive)
     {
-        g.drawText ("DRIVE",
-                    (int) kDistX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
-                    juce::Justification::centred);
+        drawKnobCaption (g, laf, gainKnobX,  kTopRowY, kKnobLargeD, "GAIN",  knobReadout01to10 (driveKnob), juce::Colours::white);
+        drawKnobCaption (g, laf, levelKnobX, kTopRowY, kKnobLargeD, "LEVEL", knobReadout01to10 (levelKnob), juce::Colours::white);
 
-        g.drawText ("LEVEL",
-                    (int) kLevelX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
-                    juce::Justification::centred);
-
-        g.drawText ("TONE",
-                    (int) kToneX, (int) (kToneY - 15.0f), (int) kToneD, 13,
-                    juce::Justification::centred);
+        drawKnobCaption (g, laf, (float) kW * 0.5f - kKnobLargeD * 0.5f, kMidRowY, kKnobLargeD,
+                          "TONE", knobReadout01to10 (toneKnob), juce::Colours::white);
     }
     else if (burnerActive)
     {
-        g.drawText ("GAIN",
-                    (int) kDistX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
-                    juce::Justification::centred);
+        drawKnobCaption (g, laf, gainKnobX,  kTopRowY, kKnobLargeD, "GAIN",   knobReadout01to10 (burnerGainKnob),   juce::Colours::white);
+        drawKnobCaption (g, laf, levelKnobX, kTopRowY, kKnobLargeD, "LEVEL", knobReadout01to10 (burnerVolumeKnob), juce::Colours::white);
 
-        g.drawText ("VOLUME",
-                    (int) kLevelX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
-                    juce::Justification::centred);
-
-        g.drawText ("BASS",
-                    (int) kBurnerBassX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
-                    juce::Justification::centred);
-        g.drawText ("MID",
-                    (int) kBurnerMidX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
-                    juce::Justification::centred);
-        g.drawText ("TREBLE",
-                    (int) kBurnerTrebleX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
-                    juce::Justification::centred);
+        const float startX = ((float) kW - (3.0f * kKnobLargeD + 2.0f * kMidGap)) * 0.5f;
+        drawKnobCaption (g, laf, startX,                              kMidRowY, kKnobLargeD, "BASS",   knobReadout01to10 (burnerBassKnob),   juce::Colours::white);
+        drawKnobCaption (g, laf, startX + kKnobLargeD + kMidGap,      kMidRowY, kKnobLargeD, "MID",    knobReadout01to10 (burnerMidKnob),    juce::Colours::white);
+        drawKnobCaption (g, laf, startX + 2.0f * (kKnobLargeD + kMidGap), kMidRowY, kKnobLargeD, "TREBLE", knobReadout01to10 (burnerTrebleKnob), juce::Colours::white);
     }
-    else if (blazerActive)
+    else // Blazer
     {
-        g.drawText ("GAIN",
-                    (int) kDistX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
-                    juce::Justification::centred);
+        drawKnobCaption (g, laf, gainKnobX,  kTopRowY, kKnobLargeD, "GAIN",   knobReadout01to10 (blazerGainKnob),   juce::Colours::white);
+        drawKnobCaption (g, laf, levelKnobX, kTopRowY, kKnobLargeD, "LEVEL", knobReadout01to10 (blazerVolumeKnob), juce::Colours::white);
 
-        g.drawText ("VOLUME",
-                    (int) kLevelX, (int) (kTopKnobY - 15.0f), (int) kTopKnobD, 13,
-                    juce::Justification::centred);
-
-        g.drawText ("BASS",
-                    (int) kBurnerBassX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
-                    juce::Justification::centred);
-        g.drawText ("TREBLE",
-                    (int) kBurnerMidX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
-                    juce::Justification::centred);
-        g.drawText ("PRES",
-                    (int) kBurnerTrebleX, (int) (kBurnerRowY - 15.0f), (int) kBurnerKnobD, 13,
-                    juce::Justification::centred);
-
-        g.drawText ("TIGHT",
-                    (int) kTightX, (int) (kTightY - 15.0f), (int) kTightD, 13,
-                    juce::Justification::centred);
-
-        // Trim label — small, dim, "advanced parameter" treatment.
-        g.setFont (laf.regularFont (7.5f));
-        g.setColour (lblCol.withAlpha (0.5f));
-        g.drawText ("TRIM",
-                    (int) kBlazerTrimX - 5, (int) (kBlazerTrimY + kBlazerTrimD + 2.0f),
-                    (int) kBlazerTrimD + 10, 10,
-                    juce::Justification::centred);
-        g.setFont (lblFont);
-        g.setColour (lblCol);
+        const float startX = ((float) kW - (3.0f * kKnobLargeD + 2.0f * kMidGap)) * 0.5f;
+        drawKnobCaption (g, laf, startX,                              kMidRowY, kKnobLargeD, "BASS",   knobReadout01to10 (blazerBassKnob),     juce::Colours::white);
+        drawKnobCaption (g, laf, startX + kKnobLargeD + kMidGap,      kMidRowY, kKnobLargeD, "TREBLE", knobReadout01to10 (blazerTrebleKnob),   juce::Colours::white);
+        drawKnobCaption (g, laf, startX + 2.0f * (kKnobLargeD + kMidGap), kMidRowY, kKnobLargeD, "PRES", knobReadout01to10 (blazerPresenceKnob), juce::Colours::white);
     }
 
+    // -----------------------------------------------------------------------
+    // 3. Bottom-left: GATE + mode-specific "tight" knob captions
+    // -----------------------------------------------------------------------
+    const float gateX  = kPadX + 16.0f;
+    const float tightX = gateX + kKnobSmallD + kSmallGap;
+    drawKnobCaption (g, laf, gateX, kBottomRowY, kKnobSmallD, "GATE", knobReadout01to10 (gateKnob), juce::Colours::white);
+
+    if (emberActive)
+        drawKnobCaption (g, laf, tightX, kBottomRowY, kKnobSmallD, "TIGHT", knobReadout01to10 (tightKnob), juce::Colours::white);
+    else if (burnerActive)
+        drawKnobCaption (g, laf, tightX, kBottomRowY, kKnobSmallD, "TIGHT", knobReadout01to10 (burnerTightKnob), juce::Colours::white);
+    else
+        drawKnobCaption (g, laf, tightX, kBottomRowY, kKnobSmallD, "TIGHT", knobReadout01to10 (blazerTightKnob), juce::Colours::white);
+
+    if (blazerActive)
+    {
+        const float trimX = (float) kW - kPadX - 60.0f - kKnobSmallD;
+        drawKnobCaption (g, laf, trimX, kBottomRowY, kKnobSmallD, "TRIM", knobReadout01to10 (blazerTrimKnob), juce::Colours::white);
+    }
 
     // -----------------------------------------------------------------------
-    // 3. LED dot — reads "active" parameter; repaints via 15 Hz timer
+    // 4. LED dot above the footswitch
     // -----------------------------------------------------------------------
     {
-        const bool  on = processorRef.apvts.getRawParameterValue ("active")->load() > 0.5f;
-        const float r  = 5.0f;
+        const bool on = processorRef.apvts.getRawParameterValue ("active")->load() > 0.5f;
+        const float cx = (float) kW * 0.5f;
+        const float footY = kBottomRowBottomY - kFootD;
+        const float cy = footY - kLedGap - kLedD * 0.5f;
+        const float r  = kLedD * 0.5f;
 
         if (on)
         {
-            g.setColour (juce::Colour (0x33aa44ff));
-            g.fillEllipse (kLedCX - r - 3.0f, kLedCY - r - 3.0f,
-                           (r + 3.0f) * 2.0f, (r + 3.0f) * 2.0f);
-
-            juce::ColourGradient glow (
-                juce::Colour (0xffee99ff), kLedCX, kLedCY,
-                juce::Colour (0xff7722cc), kLedCX + r, kLedCY + r, true);
-            g.setGradientFill (glow);
-            g.fillEllipse (kLedCX - r, kLedCY - r, r * 2.0f, r * 2.0f);
+            // Glow derives from ledColor (spec: "ledShadow" is ledColor's
+            // own glow), not the theme's primary — they happen to match
+            // for Ember but differ for Burner/Blazer.
+            g.setColour (theme.ledColor.withAlpha (0.5f));
+            g.fillEllipse (cx - r - 4.0f, cy - r - 4.0f, (r + 4.0f) * 2.0f, (r + 4.0f) * 2.0f);
+            g.setColour (theme.ledColor);
+            g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
         }
         else
         {
-            g.setColour (juce::Colour (0xff1a0828));
-            g.fillEllipse (kLedCX - r, kLedCY - r, r * 2.0f, r * 2.0f);
-            g.setColour (juce::Colour (0xff2e1042));
-            g.drawEllipse (kLedCX - r, kLedCY - r, r * 2.0f, r * 2.0f, 0.7f);
+            g.setColour (juce::Colour (0xff2a2638));
+            g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
         }
+        g.setColour (on ? theme.ledColor : juce::Colour (0xff4a4360));
+        g.drawEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f, 1.0f);
     }
 
     // -----------------------------------------------------------------------
-    // 4. SPARKER nameplate + DISTORTION subtitle (below footswitch)
+    // 5. SPARKER / DISTORTION wordmark below the footswitch
     // -----------------------------------------------------------------------
     {
-        const float nameplateY = kFootY + kFootD + 10.0f;
+        const float footY = kBottomRowBottomY - kFootD;
+        const float nameplateY = footY + kFootD + 10.0f;
+        const float cx = (float) kW * 0.5f;
 
-        // "SPARKER" — Barlow Condensed ExtraBold 24pt, letter-spaced
         g.setFont (laf.brandFont (24.0f));
         g.setColour (juce::Colours::white);
-        drawLetterSpaced (g, "SPARKER",
-                          { kPedalX, nameplateY, kPedalW, 30.0f }, 4.0f);
+        drawLetterSpaced (g, "SPARKER", { cx - 140.0f, nameplateY, 280.0f, 28.0f }, 5.3f);
 
-        // "DISTORTION" — Barlow Condensed Light 11.5pt, dimmed purple
-        g.setFont (laf.barlowLight (11.5f));
-        g.setColour (juce::Colour (0xff9977cc));
-        drawLetterSpaced (g, "DISTORTION",
-                          { kPedalX, nameplateY + 32.0f, kPedalW, 14.0f }, 2.0f);
-    }
-
-    // -----------------------------------------------------------------------
-    // 5. KHYLE AUDIO — Barlow Condensed ExtraBold 14pt, upper center
-    // -----------------------------------------------------------------------
-    g.setFont (laf.brandFont (14.0f));
-    g.setColour (juce::Colour (PedalLookAndFeel::kText).withAlpha (0.65f));
-    g.drawText ("KHYLE AUDIO",
-                (int) kPedalCX - 70, (int) (kTopKnobY + kTopKnobD * 0.40f), 140, 16,
-                juce::Justification::centred);
-
-    // -----------------------------------------------------------------------
-    // 6. Outer-area labels — Inter Medium 10pt (Ember-only: these describe
-    //    Ember-only components, which are hidden outside Ember mode)
-    // -----------------------------------------------------------------------
-    if (emberActive)
-    {
-        g.setFont (lblFont);
-        g.setColour (lblCol);
-
-        g.drawText ("INPUT",
-                    (int) kTrimLX, (int) (kTrimY + kTrimD + 6.0f), (int) kTrimD, 12,
-                    juce::Justification::centred);
-
-        g.drawText ("OUTPUT",
-                    (int) kTrimRX, (int) (kTrimY + kTrimD + 6.0f), (int) kTrimD, 12,
-                    juce::Justification::centred);
-
-        g.drawText ("TIGHT",
-                    (int) kTightX, (int) (kTightY + kTightD + 6.0f), (int) kTightD, 12,
-                    juce::Justification::centred);
-
-        g.setFont (laf.semiBoldFont (9.0f));
-        g.setColour (juce::Colour (0xff7755aa));
-        g.drawText ("OS:",
-                    kOsLabelX, kOsY, 24, kOsH,
-                    juce::Justification::centredLeft);
-
-        g.setFont (lblFont);
-        g.setColour (lblCol);
-        g.drawText ("GATE",
-                    (int) kGateKnobX, (int) (kGateKnobY + kGateKnobD + 6.0f),
-                    (int) kGateKnobD, 12,
-                    juce::Justification::centred);
-
-        // -------------------------------------------------------------------
-        // 7. dB tick-mark scales beside the trim knobs (colors unchanged)
-        // -------------------------------------------------------------------
-        {
-            const float scaleX   = kTrimLX + kTrimD + 9.0f;
-            const float scaleTop = kTrimY + 5.0f;
-            const float scaleBot = kTrimY + kTrimD - 5.0f;
-            const float scaleH   = scaleBot - scaleTop;
-            const juce::Colour scaleCol (0xff3d2a55);
-
-            g.setColour (scaleCol);
-            g.drawLine (scaleX, scaleTop, scaleX, scaleBot, 0.6f);
-
-            const float dbs[] = { -12.0f, -6.0f, 0.0f, 6.0f, 12.0f };
-            for (float db : dbs)
-            {
-                const float t   = (db + 12.0f) / 24.0f;
-                const float ty  = scaleTop + t * scaleH;
-                const float len = (db == 0.0f) ? 7.0f : 4.5f;
-                g.drawLine (scaleX, ty, scaleX + len, ty, 0.7f);
-            }
-        }
-
-        {
-            const float scaleX   = kTrimRX - 9.0f;
-            const float scaleTop = kTrimY + 5.0f;
-            const float scaleBot = kTrimY + kTrimD - 5.0f;
-            const float scaleH   = scaleBot - scaleTop;
-            const juce::Colour scaleCol (0xff3d2a55);
-
-            g.setColour (scaleCol);
-            g.drawLine (scaleX, scaleTop, scaleX, scaleBot, 0.6f);
-
-            const float dbs[] = { -12.0f, -6.0f, 0.0f, 6.0f, 12.0f };
-            for (float db : dbs)
-            {
-                const float t   = (db + 12.0f) / 24.0f;
-                const float ty  = scaleTop + t * scaleH;
-                const float len = (db == 0.0f) ? 7.0f : 4.5f;
-                g.drawLine (scaleX - len, ty, scaleX, ty, 0.7f);
-            }
-        }
+        g.setFont (laf.uiFont (12.0f, true));
+        g.setColour (theme.text);
+        drawLetterSpaced (g, "DISTORTION", { cx - 140.0f, nameplateY + 28.0f, 280.0f, 16.0f }, 2.6f);
     }
 }
 
 // ============================================================================
 // Layout
 // ============================================================================
+// Global AMP/DRIVE voicing — bottom right, BELOW the mode/aggression panel
+// and sharing its right edge, so that corner reads as one column. (It used to
+// sit in the header beside the circuit badge, which crowded that corner.)
+//
+// Blazer needs it lower than the other two. Ember and Burner fill the slot
+// above with a mode panel whose bottom edge is kBottomRowBottomY, but Blazer
+// has no mode switch and instead puts its TRIM knob in that corner — and a
+// knob brings a caption with it. drawKnobCaption() lays the label out at
+// knob bottom + 6 and the numeric readout 18 below that, running to
+// kBottomRowBottomY + 40, which is what the switch was landing on top of.
+//
+// Both offsets are derived from that caption geometry rather than hardcoded,
+// so they stay correct if the knob size or caption spacing is ever changed.
+void SuhrRiotEditor::layOutVoicingSwitch()
+{
+    const int circuit = static_cast<int> (processorRef.apvts.getRawParameterValue ("circuit")->load());
+    const bool blazerActive = (circuit == 2);
+
+    constexpr float voicingW = 132.0f;
+    constexpr float voicingH = 28.0f;
+
+    // Caption block under a bottom-row knob: 6 px gap, 18 px label, 16 px
+    // readout (see drawKnobCaption). Blazer clears all of it; the others
+    // only need to clear the mode panel's bottom edge.
+    constexpr float kCaptionBlockH = 6.0f + 18.0f + 16.0f;
+    const float gap = blazerActive ? kCaptionBlockH + 8.0f : 12.0f;
+
+    voicingSwitch.setBounds ((int) ((float) kW - kPadX - voicingW),
+                             (int) (kBottomRowBottomY + gap),
+                             (int) voicingW, (int) voicingH);
+}
+
 void SuhrRiotEditor::resized()
 {
-    // Inner top-row knobs
-    driveKnob .setBounds ((int) kDistX,  (int) kTopKnobY, (int) kTopKnobD, (int) kTopKnobD);
-    levelKnob .setBounds ((int) kLevelX, (int) kTopKnobY, (int) kTopKnobD, (int) kTopKnobD);
+    // `root` is always the base 800x600 canvas; the UI-size transform scales
+    // it (and every control + all chassis painting) up to fill the editor.
+    root.setBounds (0, 0, kW, kH);
+    root.setTransform (uiScale == 1.0f ? juce::AffineTransform()
+                                       : juce::AffineTransform::scale (uiScale));
 
-    // TONE knob
-    toneKnob  .setBounds ((int) kToneX,  (int) kToneY,    (int) kToneD,    (int) kToneD);
+    header.setBounds (0, 0, kW, kHeaderH);
 
-    // Footswitch
-    footswitch.setBounds ((int) kFootX, (int) kFootY, (int) kFootD, (int) kFootD);
+    // --- Top row ---
+    const float inputKnobX  = colX (0) + 18.0f;
+    const float gainKnobX   = colX (1) + (kColW - kKnobLargeD) * 0.5f;
+    const float levelKnobX  = colX (3) + (kColW - kKnobLargeD) * 0.5f;
+    const float outputKnobX = colX (4) + kColW - kKnobLargeD - 18.0f;
 
-    // Outer trim knobs
-    inputTrimKnob .setBounds ((int) kTrimLX, (int) kTrimY, (int) kTrimD, (int) kTrimD);
-    outputTrimKnob.setBounds ((int) kTrimRX, (int) kTrimY, (int) kTrimD, (int) kTrimD);
+    inputTrimKnob .setBounds ((int) inputKnobX,  (int) kTopRowY, (int) kKnobLargeD, (int) kKnobLargeD);
+    outputTrimKnob.setBounds ((int) outputKnobX, (int) kTopRowY, (int) kKnobLargeD, (int) kKnobLargeD);
+    inputMeter .setBounds ((int) (inputKnobX - kMeterW - 4.0f),      (int) (kTopRowY + 6.0f), (int) kMeterW, (int) (kKnobLargeD - 12.0f));
+    outputMeter.setBounds ((int) (outputKnobX + kKnobLargeD + 4.0f), (int) (kTopRowY + 6.0f), (int) kMeterW, (int) (kKnobLargeD - 12.0f));
 
-    // dB readout labels (below INPUT / OUTPUT text)
-    const int dbLblW = (int) kTrimD + 8;
-    inputTrimDbLabel .setBounds ((int) kTrimLX - 4, (int) (kTrimY + kTrimD + 20), dbLblW, 12);
-    outputTrimDbLabel.setBounds ((int) kTrimRX - 4, (int) (kTrimY + kTrimD + 20), dbLblW, 12);
+    driveKnob       .setBounds ((int) gainKnobX,  (int) kTopRowY, (int) kKnobLargeD, (int) kKnobLargeD);
+    levelKnob       .setBounds ((int) levelKnobX, (int) kTopRowY, (int) kKnobLargeD, (int) kKnobLargeD);
+    burnerGainKnob  .setBounds ((int) gainKnobX,  (int) kTopRowY, (int) kKnobLargeD, (int) kKnobLargeD);
+    burnerVolumeKnob.setBounds ((int) levelKnobX, (int) kTopRowY, (int) kKnobLargeD, (int) kKnobLargeD);
+    blazerGainKnob  .setBounds ((int) gainKnobX,  (int) kTopRowY, (int) kKnobLargeD, (int) kKnobLargeD);
+    blazerVolumeKnob.setBounds ((int) levelKnobX, (int) kTopRowY, (int) kKnobLargeD, (int) kKnobLargeD);
 
-    // Tight knob
-    tightKnob.setBounds ((int) kTightX, (int) kTightY, (int) kTightD, (int) kTightD);
+    // --- Middle row ---
+    toneKnob.setBounds ((int) ((float) kW * 0.5f - kKnobLargeD * 0.5f), (int) kMidRowY, (int) kKnobLargeD, (int) kKnobLargeD);
 
-    // Oversampling selector
-    osSwitch.setBounds (kOsX, kOsY, kOsW, kOsH);
+    const float midStartX = ((float) kW - (3.0f * kKnobLargeD + 2.0f * kMidGap)) * 0.5f;
+    burnerBassKnob  .setBounds ((int) midStartX,                                  (int) kMidRowY, (int) kKnobLargeD, (int) kKnobLargeD);
+    burnerMidKnob   .setBounds ((int) (midStartX + kKnobLargeD + kMidGap),        (int) kMidRowY, (int) kKnobLargeD, (int) kKnobLargeD);
+    burnerTrebleKnob.setBounds ((int) (midStartX + 2.0f * (kKnobLargeD + kMidGap)), (int) kMidRowY, (int) kKnobLargeD, (int) kKnobLargeD);
 
-    // Gate threshold knob
-    gateKnob.setBounds ((int) kGateKnobX, (int) kGateKnobY,
-                        (int) kGateKnobD, (int) kGateKnobD);
+    blazerBassKnob    .setBounds ((int) midStartX,                                  (int) kMidRowY, (int) kKnobLargeD, (int) kKnobLargeD);
+    blazerTrebleKnob  .setBounds ((int) (midStartX + kKnobLargeD + kMidGap),        (int) kMidRowY, (int) kKnobLargeD, (int) kKnobLargeD);
+    blazerPresenceKnob.setBounds ((int) (midStartX + 2.0f * (kKnobLargeD + kMidGap)), (int) kMidRowY, (int) kKnobLargeD, (int) kKnobLargeD);
 
-    // Mode panel
-    modeSwitch.setBounds (kModePX, kModePY, kModePW, kModePH);
+    // --- Bottom row ---
+    const float gateX  = kPadX + 16.0f;
+    const float tightX = gateX + kKnobSmallD + kSmallGap;
+    gateKnob.setBounds ((int) gateX, (int) kBottomRowY, (int) kKnobSmallD, (int) kKnobSmallD);
 
-    // Circuit selector
-    circuitSwitch.setBounds (kCircuitPX, kCircuitPY, kCircuitPW, kCircuitPH);
+    tightKnob      .setBounds ((int) tightX, (int) kBottomRowY, (int) kKnobSmallD, (int) kKnobSmallD);
+    burnerTightKnob.setBounds ((int) tightX, (int) kBottomRowY, (int) kKnobSmallD, (int) kKnobSmallD);
+    blazerTightKnob.setBounds ((int) tightX, (int) kBottomRowY, (int) kKnobSmallD, (int) kKnobSmallD);
 
-    // Burner-only controls — Gain/Volume reuse the DRIVE/LEVEL slots.
-    burnerGainKnob  .setBounds ((int) kDistX,  (int) kTopKnobY, (int) kTopKnobD, (int) kTopKnobD);
-    burnerVolumeKnob.setBounds ((int) kLevelX, (int) kTopKnobY, (int) kTopKnobD, (int) kTopKnobD);
-    burnerBassKnob  .setBounds ((int) kBurnerBassX,   (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
-    burnerMidKnob   .setBounds ((int) kBurnerMidX,    (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
-    burnerTrebleKnob.setBounds ((int) kBurnerTrebleX, (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
+    const float trimX = (float) kW - kPadX - 60.0f - kKnobSmallD;
+    blazerTrimKnob.setBounds ((int) trimX, (int) kBottomRowY, (int) kKnobSmallD, (int) kKnobSmallD);
 
-    aggressionSwitch.setBounds (kAggressionX, kAggressionY, kAggressionW, kAggressionH);
+    const float footY = kBottomRowBottomY - kFootD;
+    const float footX  = (float) kW * 0.5f - kFootD * 0.5f;
+    footswitch.setBounds ((int) footX, (int) footY, (int) kFootD, (int) kFootD);
 
-    // Blazer-only controls
-    blazerGainKnob    .setBounds ((int) kDistX,  (int) kTopKnobY, (int) kTopKnobD, (int) kTopKnobD);
-    blazerVolumeKnob  .setBounds ((int) kLevelX, (int) kTopKnobY, (int) kTopKnobD, (int) kTopKnobD);
-    blazerBassKnob    .setBounds ((int) kBurnerBassX,   (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
-    blazerTrebleKnob  .setBounds ((int) kBurnerMidX,    (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
-    blazerPresenceKnob.setBounds ((int) kBurnerTrebleX, (int) kBurnerRowY, (int) kBurnerKnobD, (int) kBurnerKnobD);
-    blazerTightKnob   .setBounds ((int) kTightX, (int) kTightY, (int) kTightD, (int) kTightD);
-    blazerTrimKnob    .setBounds ((int) kBlazerTrimX, (int) kBlazerTrimY, (int) kBlazerTrimD, (int) kBlazerTrimD);
+    // Right-side mode-specific panels — bottom-aligned to the same
+    // kBottomRowBottomY baseline as the footswitch and GATE/TIGHT knobs.
+    const float modePanelW = 200.0f;
+    modeSwitch.setBounds ((int) ((float) kW - kPadX - modePanelW), (int) (kBottomRowBottomY - kModePanelH),
+                          (int) modePanelW, (int) kModePanelH);
+
+    const float aggrPanelW = 170.0f;
+    aggressionSwitch.setBounds ((int) ((float) kW - kPadX - aggrPanelW), (int) (kBottomRowBottomY - kModePanelH),
+                                (int) aggrPanelW, (int) kModePanelH);
+
+    layOutVoicingSwitch();
+    // No per-child scaling here: every control above is a child of `root`,
+    // and `root`'s transform (set at the top) scales them all at once.
+}
+
+// ============================================================================
+// UI size (Small / Medium / Large) — right-click menu
+// ============================================================================
+void SuhrRiotEditor::applyUiScale (float newScale, bool persist)
+{
+    uiScale = newScale;
+
+    if (persist)
+        processorRef.apvts.state.setProperty (kUiScaleProp, (double) newScale, nullptr);
+
+    // Resize the window to the scaled base dimensions. setSize triggers
+    // resized(), which re-lays-out children and applies the scale to them.
+    setSize (juce::roundToInt ((float) kW * uiScale),
+             juce::roundToInt ((float) kH * uiScale));
+    repaint();
+}
+
+void SuhrRiotEditor::showSizeMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("Plugin Size");
+    m.addItem (1, "Small",  true, uiScale == kScaleSmall);
+    m.addItem (2, "Medium", true, uiScale == kScaleMedium);
+    m.addItem (3, "Large",  true, uiScale == kScaleLarge);
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                     [this] (int result)
+                     {
+                         if (result == 1) applyUiScale (kScaleSmall,  true);
+                         else if (result == 2) applyUiScale (kScaleMedium, true);
+                         else if (result == 3) applyUiScale (kScaleLarge,  true);
+                     });
+}
+
+void SuhrRiotEditor::rootMouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+        showSizeMenu();
 }
